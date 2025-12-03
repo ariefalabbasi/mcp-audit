@@ -1,0 +1,353 @@
+#!/usr/bin/env python3
+"""
+Pricing Configuration Module - Model pricing loader and validator
+
+Loads pricing data from mcp-audit.toml configuration file.
+Provides validation and warnings for missing pricing.
+"""
+
+import warnings
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+# Try Python 3.11+ built-in tomllib, fall back to toml package
+try:
+    import tomllib
+
+    HAS_TOMLLIB = True
+except ImportError:
+    try:
+        import toml as tomllib  # type: ignore
+
+        HAS_TOMLLIB = True
+    except ImportError:
+        HAS_TOMLLIB = False
+        warnings.warn(
+            "TOML support not available. Install 'toml' package: pip install toml",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+
+
+class PricingConfig:
+    """
+    Pricing configuration loader and validator.
+
+    Loads model pricing from mcp-audit.toml and provides
+    utilities for cost calculation and validation.
+    """
+
+    # Standard locations to search for config (in priority order)
+    CONFIG_SEARCH_PATHS = [
+        Path("mcp-audit.toml"),  # CWD (project-specific override)
+        Path.home() / ".mcp-audit" / "mcp-audit.toml",  # User config
+        Path(__file__).parent.parent.parent / "mcp-audit.toml",  # Package root
+    ]
+
+    def __init__(self, config_path: Optional[Path] = None):
+        """
+        Initialize pricing configuration.
+
+        Args:
+            config_path: Path to mcp-audit.toml. If None, searches standard locations:
+                        1. ./mcp-audit.toml (CWD - project override)
+                        2. ~/.mcp-audit/mcp-audit.toml (user config)
+                        3. Package root (bundled default)
+        """
+        self.config_path = config_path or self._find_config()
+        self.pricing_data: Dict[str, Dict[str, Any]] = {}
+        self.metadata: Dict[str, Any] = {}
+        self.loaded = False
+
+        if self.config_path and self.config_path.exists():
+            self.load()
+
+    def _find_config(self) -> Optional[Path]:
+        """Search standard locations for config file."""
+        for path in self.CONFIG_SEARCH_PATHS:
+            if path.exists():
+                return path
+        return None
+
+    def load(self) -> None:
+        """Load pricing configuration from TOML file."""
+        if not HAS_TOMLLIB:
+            raise RuntimeError(
+                "Cannot load pricing config: TOML support not available. "
+                "Install 'toml' package: pip install toml"
+            )
+
+        if not self.config_path:
+            raise RuntimeError("Cannot load pricing config: No config path set")
+
+        with open(self.config_path, "rb") as f:
+            config = tomllib.load(f)
+
+        # Extract pricing data
+        self.pricing_data = config.get("pricing", {})
+        self.metadata = config.get("metadata", {})
+        self.loaded = True
+
+    def get_model_pricing(
+        self, model_name: str, vendor: Optional[str] = None
+    ) -> Optional[Dict[str, float]]:
+        """
+        Get pricing for a specific model.
+
+        Args:
+            model_name: Model identifier (e.g., 'claude-sonnet-4-5-20250929')
+            vendor: Vendor namespace (e.g., 'claude', 'openai', 'custom')
+                   If None, searches all namespaces
+
+        Returns:
+            Dictionary with pricing keys: input, output, cache_create, cache_read
+            Returns None if model not found
+        """
+        if not self.loaded:
+            warnings.warn(
+                f"Pricing config not loaded. Missing file: {self.config_path}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            return None
+
+        # Search specific vendor if provided
+        if vendor:
+            vendor_pricing: Dict[str, Dict[str, float]] = self.pricing_data.get(vendor, {})
+            if model_name in vendor_pricing:
+                result: Dict[str, float] = vendor_pricing[model_name]
+                return result
+            return None
+
+        # Search all vendors
+        for _vendor_name, models in self.pricing_data.items():
+            if model_name in models:
+                result_model: Dict[str, float] = models[model_name]
+                return result_model
+
+        # Model not found
+        warnings.warn(
+            f"No pricing configured for model: {model_name}. "
+            f"Add pricing to {self.config_path} under [pricing.custom]",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return None
+
+    def calculate_cost(
+        self,
+        model_name: str,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        cache_created_tokens: int = 0,
+        cache_read_tokens: int = 0,
+        vendor: Optional[str] = None,
+    ) -> float:
+        """
+        Calculate cost for token usage.
+
+        Args:
+            model_name: Model identifier
+            input_tokens: Number of input tokens
+            output_tokens: Number of output tokens
+            cache_created_tokens: Number of cache creation tokens
+            cache_read_tokens: Number of cache read tokens
+            vendor: Optional vendor namespace
+
+        Returns:
+            Cost in USD (0.0 if pricing not found)
+        """
+        pricing = self.get_model_pricing(model_name, vendor)
+        if not pricing:
+            return 0.0
+
+        cost = 0.0
+
+        # Input tokens
+        if "input" in pricing:
+            cost += (input_tokens / 1_000_000) * pricing["input"]
+
+        # Output tokens
+        if "output" in pricing:
+            cost += (output_tokens / 1_000_000) * pricing["output"]
+
+        # Cache creation tokens
+        if "cache_create" in pricing:
+            cost += (cache_created_tokens / 1_000_000) * pricing["cache_create"]
+
+        # Cache read tokens
+        if "cache_read" in pricing:
+            cost += (cache_read_tokens / 1_000_000) * pricing["cache_read"]
+
+        return cost
+
+    def list_models(self, vendor: Optional[str] = None) -> List[str]:
+        """
+        List all configured models.
+
+        Args:
+            vendor: Filter by vendor namespace (None = all vendors)
+
+        Returns:
+            List of model names
+        """
+        if not self.loaded:
+            return []
+
+        if vendor:
+            return list(self.pricing_data.get(vendor, {}).keys())
+
+        # All models from all vendors
+        models: list[str] = []
+        for vendor_models in self.pricing_data.values():
+            models.extend(vendor_models.keys())
+        return models
+
+    def validate(self) -> Dict[str, Any]:
+        """
+        Validate pricing configuration.
+
+        Returns:
+            Dictionary with validation results:
+            - valid: bool
+            - errors: List[str]
+            - warnings: List[str]
+        """
+        result: Dict[str, Any] = {"valid": True, "errors": [], "warnings": []}
+
+        if not self.loaded:
+            result["valid"] = False
+            result["errors"].append(f"Config file not found: {self.config_path}")
+            return result
+
+        if not self.pricing_data:
+            result["warnings"].append("No pricing data configured")
+
+        # Validate each model's pricing structure
+        for vendor, models in self.pricing_data.items():
+            for model_name, pricing in models.items():
+                if not isinstance(pricing, dict):
+                    result["errors"].append(f"Invalid pricing format for {vendor}.{model_name}")
+                    result["valid"] = False
+                    continue
+
+                # Check required fields
+                if "input" not in pricing:
+                    result["warnings"].append(f"Missing 'input' pricing for {vendor}.{model_name}")
+
+                if "output" not in pricing:
+                    result["warnings"].append(f"Missing 'output' pricing for {vendor}.{model_name}")
+
+                # Validate numeric values
+                for key in ["input", "output", "cache_create", "cache_read"]:
+                    if key in pricing:
+                        try:
+                            float(pricing[key])
+                        except (ValueError, TypeError):
+                            result["errors"].append(
+                                f"Invalid numeric value for {vendor}.{model_name}.{key}"
+                            )
+                            result["valid"] = False
+
+        return result
+
+
+# ============================================================================
+# Convenience Functions
+# ============================================================================
+
+
+def load_pricing_config(config_path: Optional[Path] = None) -> PricingConfig:
+    """
+    Convenience function to load pricing configuration.
+
+    Args:
+        config_path: Path to mcp-audit.toml
+
+    Returns:
+        PricingConfig instance
+    """
+    return PricingConfig(config_path)
+
+
+def get_model_cost(
+    model_name: str,
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+    cache_created_tokens: int = 0,
+    cache_read_tokens: int = 0,
+    config_path: Optional[Path] = None,
+) -> float:
+    """
+    Convenience function to calculate model cost.
+
+    Args:
+        model_name: Model identifier
+        input_tokens: Number of input tokens
+        output_tokens: Number of output tokens
+        cache_created_tokens: Number of cache creation tokens
+        cache_read_tokens: Number of cache read tokens
+        config_path: Path to pricing config
+
+    Returns:
+        Cost in USD
+    """
+    config = PricingConfig(config_path)
+    return config.calculate_cost(
+        model_name, input_tokens, output_tokens, cache_created_tokens, cache_read_tokens
+    )
+
+
+# ============================================================================
+# Testing
+# ============================================================================
+
+if __name__ == "__main__":
+    print("Pricing Configuration Module Tests")
+    print("=" * 60)
+
+    # Test loading
+    config = PricingConfig()
+
+    if config.loaded:
+        print(f"✓ Loaded config from {config.config_path}")
+
+        # Validate
+        validation = config.validate()
+        print(f"\nValidation: {'✓ PASS' if validation['valid'] else '✗ FAIL'}")
+
+        if validation["errors"]:
+            print("\nErrors:")
+            for error in validation["errors"]:
+                print(f"  - {error}")
+
+        if validation["warnings"]:
+            print("\nWarnings:")
+            for warning in validation["warnings"]:
+                print(f"  - {warning}")
+
+        # List models
+        print(f"\nConfigured models: {len(config.list_models())}")
+        print("\nClaude models:")
+        for model in config.list_models("claude"):
+            print(f"  - {model}")
+
+        print("\nOpenAI models:")
+        for model in config.list_models("openai"):
+            print(f"  - {model}")
+
+        # Test pricing lookup
+        print("\nPricing lookup test:")
+        model = "claude-sonnet-4-5-20250929"
+        pricing = config.get_model_pricing(model)
+        print(f"  Model: {model}")
+        print(f"  Pricing: {pricing}")
+
+        # Test cost calculation
+        print("\nCost calculation test:")
+        cost = config.calculate_cost(
+            model, input_tokens=10000, output_tokens=5000, cache_read_tokens=50000
+        )
+        print(f"  10K input + 5K output + 50K cache read = ${cost:.4f}")
+    else:
+        print(f"✗ Config file not found: {config.config_path}")

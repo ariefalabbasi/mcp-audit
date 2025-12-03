@@ -1,0 +1,12 @@
+# Production dependencies for MCP Audit
+#
+# MCP Audit has zero required dependencies for Python 3.11+
+# (uses built-in tomllib for TOML parsing)
+#
+# For Python 3.8-3.10, the toml package is optional but recommended
+# for pricing configuration support. Without it, mcp-audit.toml
+# won't be loaded and cost calculations will return 0.
+
+# Optional: TOML parsing for Python 3.8-3.10
+# Uncomment if using Python 3.8-3.10 and want pricing configuration
+# toml>=0.10.2

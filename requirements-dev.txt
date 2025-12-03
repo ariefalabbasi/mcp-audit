@@ -1,0 +1,16 @@
+# Development dependencies for MCP Audit
+
+# Testing
+pytest>=7.4.0
+pytest-cov>=4.1.0  # For coverage reports
+pytest-mock>=3.11.1  # For advanced mocking
+
+# Type checking
+mypy>=1.7.0
+
+# Linting and formatting
+ruff>=0.1.0  # Fast Python linter
+black>=23.0.0  # Code formatter
+
+# Configuration
+toml>=0.10.2  # For TOML config parsing (Python 3.8-3.10; 3.11+ has built-in tomllib)

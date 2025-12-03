@@ -1,0 +1,160 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mcp-audit"
+version = "0.3.12"
+description = "Real-time MCP token tracker for Claude Code, Codex CLI & Gemini CLI. Investigate context bloat and high token usage at the source."
+readme = "README.md"
+license = "MIT"
+authors = [
+    { name = "Little Bear Apps", email = "help@littlebearapps.com" }
+]
+keywords = ["mcp", "model-context-protocol", "token-tracking", "context-window", "claude-code", "codex-cli", "gemini-cli", "llm-cost", "ai-coding", "token-usage"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Software Development :: Quality Assurance",
+    "Typing :: Typed",
+]
+requires-python = ">=3.8"
+dependencies = [
+    "rich>=13.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "mypy>=1.7.0",
+    "ruff>=0.1.0",
+    "black>=23.0.0",
+    "build>=1.0.0",
+    "twine>=4.0.0",
+]
+toml = [
+    "toml>=0.10.2",
+]
+
+[project.scripts]
+mcp-audit = "mcp_audit.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/littlebearapps/mcp-audit"
+Documentation = "https://github.com/littlebearapps/mcp-audit#readme"
+Repository = "https://github.com/littlebearapps/mcp-audit"
+Issues = "https://github.com/littlebearapps/mcp-audit/issues"
+Changelog = "https://github.com/littlebearapps/mcp-audit/blob/main/CHANGELOG.md"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+mcp_audit = ["py.typed"]
+
+[tool.pytest.ini_options]
+minversion = "7.4"
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "--verbose",
+]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+[tool.coverage.run]
+source = ["src/mcp_audit"]
+omit = [
+    "tests/*",
+    "venv/*",
+    ".venv/*",
+    "*/site-packages/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "@abstractmethod",
+]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_any_generics = true
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+strict_equality = true
+# Only check src/ - excludes tests and legacy root scripts
+files = ["src"]
+exclude = [
+    "tests/",
+    "live-.*\\.py$",
+    "analyze-.*\\.py$",
+    "investigate-.*\\.py$",
+]
+
+[tool.ruff]
+target-version = "py38"
+line-length = 100
+exclude = [
+    "test_*.py",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+    "ARG", # flake8-unused-arguments
+    "SIM", # flake8-simplify
+]
+ignore = [
+    "E501",  # line too long (handled by black)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["ARG", "S101"]
+"src/mcp_audit/storage.py" = ["ARG002"]  # Platform arg reserved for future use
+"src/mcp_audit/cli.py" = ["ARG002"]  # Args objects from argparse
+
+[tool.black]
+line-length = 100
+target-version = ["py38", "py39", "py310", "py311", "py312", "py313"]
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.git
+  | \.venv
+  | venv
+  | _build
+  | build
+  | dist
+)/
+'''
