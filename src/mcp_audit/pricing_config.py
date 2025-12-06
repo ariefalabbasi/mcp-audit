@@ -35,6 +35,9 @@ class PricingConfig:
 
     Loads model pricing from mcp-audit.toml and provides
     utilities for cost calculation and validation.
+
+    If no config file is found, falls back to DEFAULT_PRICING with
+    common models for Claude, OpenAI/Codex, and Gemini.
     """
 
     # Standard locations to search for config (in priority order)
@@ -43,6 +46,90 @@ class PricingConfig:
         Path.home() / ".mcp-audit" / "mcp-audit.toml",  # User config
         Path(__file__).parent.parent.parent / "mcp-audit.toml",  # Package root
     ]
+
+    # Default pricing fallback for pip-installed users without config file (task-67)
+    # Prices in USD per million tokens (verified 2025-12-04)
+    DEFAULT_PRICING: Dict[str, Dict[str, Dict[str, float]]] = {
+        "claude": {
+            # Claude Opus 4.5 (most capable)
+            "claude-opus-4-5-20251101": {
+                "input": 5.0,
+                "output": 25.0,
+                "cache_create": 6.25,
+                "cache_read": 0.50,
+            },
+            # Claude Sonnet 4.5 (balanced)
+            "claude-sonnet-4-5-20250929": {
+                "input": 3.0,
+                "output": 15.0,
+                "cache_create": 3.75,
+                "cache_read": 0.30,
+            },
+            # Claude Haiku 4.5 (fast/cheap)
+            "claude-haiku-4-5-20251001": {
+                "input": 1.0,
+                "output": 5.0,
+                "cache_create": 1.25,
+                "cache_read": 0.10,
+            },
+        },
+        "openai": {
+            # GPT-5.1 Codex Max (Codex CLI default)
+            "gpt-5.1-codex-max": {
+                "input": 1.25,
+                "output": 10.0,
+                "cache_read": 0.125,
+            },
+            # GPT-5.1
+            "gpt-5.1": {
+                "input": 1.25,
+                "output": 10.0,
+                "cache_read": 0.125,
+            },
+            # GPT-5.1 Codex
+            "gpt-5.1-codex": {
+                "input": 1.25,
+                "output": 10.0,
+                "cache_read": 0.125,
+            },
+            # GPT-5.1 Codex Mini
+            "gpt-5.1-codex-mini": {
+                "input": 0.25,
+                "output": 2.0,
+                "cache_read": 0.025,
+            },
+        },
+        "gemini": {
+            # Gemini 2.5 Flash (Gemini CLI default)
+            "gemini-2.5-flash": {
+                "input": 0.30,
+                "output": 2.50,
+                "cache_create": 0.03,
+                "cache_read": 0.03,
+            },
+            # Gemini 2.5 Pro
+            "gemini-2.5-pro": {
+                "input": 1.25,
+                "output": 10.0,
+                "cache_create": 0.3125,
+                "cache_read": 0.125,
+            },
+            # Gemini 2.0 Flash
+            "gemini-2.0-flash": {
+                "input": 0.10,
+                "output": 0.40,
+                "cache_create": 0.025,
+                "cache_read": 0.025,
+            },
+        },
+    }
+
+    DEFAULT_METADATA: Dict[str, Any] = {
+        "currency": "USD",
+        "pricing_unit": "per_million_tokens",
+        "source": "hardcoded defaults (task-67)",
+        "exchange_rates": {"USD_to_AUD": 1.54},
+    }
 
     def __init__(self, config_path: Optional[Path] = None):
         """
@@ -53,14 +140,20 @@ class PricingConfig:
                         1. ./mcp-audit.toml (CWD - project override)
                         2. ~/.mcp-audit/mcp-audit.toml (user config)
                         3. Package root (bundled default)
+                        4. Falls back to DEFAULT_PRICING if no file found (task-67)
         """
         self.config_path = config_path or self._find_config()
         self.pricing_data: Dict[str, Dict[str, Any]] = {}
         self.metadata: Dict[str, Any] = {}
         self.loaded = False
+        self._source = "none"  # Track pricing source: "file", "defaults", or "none"
 
         if self.config_path and self.config_path.exists():
             self.load()
+            self._source = "file"
+        else:
+            # Fall back to default pricing (task-67)
+            self._load_defaults()
 
     def _find_config(self) -> Optional[Path]:
         """Search standard locations for config file."""
@@ -68,6 +161,13 @@ class PricingConfig:
             if path.exists():
                 return path
         return None
+
+    def _load_defaults(self) -> None:
+        """Load hardcoded default pricing when no config file is found (task-67)."""
+        self.pricing_data = self.DEFAULT_PRICING.copy()
+        self.metadata = self.DEFAULT_METADATA.copy()
+        self.loaded = True
+        self._source = "defaults"
 
     def load(self) -> None:
         """Load pricing configuration from TOML file."""
@@ -125,13 +225,21 @@ class PricingConfig:
                 result_model: Dict[str, float] = models[model_name]
                 return result_model
 
-        # Model not found
-        warnings.warn(
-            f"No pricing configured for model: {model_name}. "
-            f"Add pricing to {self.config_path} under [pricing.custom]",
-            RuntimeWarning,
-            stacklevel=2,
-        )
+        # Model not found - provide helpful guidance based on pricing source
+        if self._source == "defaults":
+            warnings.warn(
+                f"No pricing for model: {model_name}. "
+                f"Create ~/.mcp-audit/mcp-audit.toml with [pricing.custom] section.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+        else:
+            warnings.warn(
+                f"No pricing configured for model: {model_name}. "
+                f"Add pricing to {self.config_path} under [pricing.custom]",
+                RuntimeWarning,
+                stacklevel=2,
+            )
         return None
 
     def calculate_cost(

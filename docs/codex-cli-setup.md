@@ -32,7 +32,7 @@ Monitor a running Codex CLI session:
 codex
 
 # In another terminal, monitor the session
-mcp-audit collect --platform codex_cli
+mcp-audit collect --platform codex-cli
 
 # Or use Python API
 from mcp_audit.codex_cli_adapter import CodexCLIAdapter
@@ -46,10 +46,10 @@ Analyze completed sessions:
 
 ```bash
 # Process the most recent session
-mcp-audit collect --platform codex_cli --batch --latest
+mcp-audit collect --platform codex-cli --batch --latest
 
 # Process a specific session file
-mcp-audit collect --platform codex_cli --batch --session-file ~/.codex/sessions/2025/11/04/session.jsonl
+mcp-audit collect --platform codex-cli --batch --session-file ~/.codex/sessions/2025/11/04/session.jsonl
 ```
 
 ### 3. List Available Sessions
@@ -119,7 +119,7 @@ sessions = adapter.get_session_files(since=since, until=until)
 ## Example Output
 
 ```
-$ mcp-audit collect --platform codex_cli --batch --latest
+$ mcp-audit collect --platform codex-cli --batch --latest
 
 [Codex CLI] Processing: rollout-2025-11-23T16-40-08-...jsonl
   Total tokens: 10,454,282
@@ -147,6 +147,87 @@ Edit `mcp-audit.toml` to add custom Codex models:
 "gpt-5-codex" = { input = 1.25, output = 10.0, cache_read = 0.125 }
 ```
 
+## Platform Limitations
+
+Codex CLI has some differences from Claude Code that affect MCP Audit data:
+
+### Per-Tool Token Attribution: Not Available
+
+Codex CLI reports tokens at the **session level only**. Individual tool calls in the `tool_calls` array will show `total_tokens: 0`:
+
+```json
+{
+  "tool_calls": [
+    {
+      "tool": "mcp__brave-search__brave_web_search",
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "total_tokens": 0
+    }
+  ],
+  "token_usage": {
+    "total_tokens": 2723961
+  }
+}
+```
+
+**Why**: Codex CLI separates `function_call` events (tool name/arguments) from `token_count` events (cumulative totals). There's no way to correlate specific tokens to specific tool calls.
+
+**Impact**: Session-level totals remain accurate for cost analysis. Per-tool token analysis is not available.
+
+### Cache Creation: Not Reported
+
+Only cache reads are reported. `cache_created_tokens` is always 0:
+
+```json
+"token_usage": {
+  "cache_created_tokens": 0,
+  "cache_read_tokens": 1272832
+}
+```
+
+**Why**: OpenAI's API only reports `cached_input_tokens` (cache hits), not cache creation events.
+
+**Impact**: Cache efficiency analysis shows reads only. Cannot distinguish cache misses from new context.
+
+### Built-in Tools vs MCP Tools
+
+Codex CLI has platform-specific built-in tools that are tracked separately:
+
+| Built-in Tool | Purpose |
+|---------------|---------|
+| `shell_command` | Execute bash commands |
+| `update_plan` | Codex planning system |
+| `list_mcp_resources` | List MCP server resources |
+| `read_file`, `write_file` | File operations |
+| `list_directory` | Directory listing |
+
+Built-in tools appear in the "Built-in Tools" count, not the MCP server hierarchy.
+
+### Tool Duration: Available
+
+Unlike tokens, tool execution duration IS available. MCP Audit extracts "Wall time" from `function_call_output` events:
+
+```json
+{
+  "tool_calls": [
+    {
+      "tool": "mcp__brave-search__brave_web_search",
+      "duration_ms": 1500
+    }
+  ]
+}
+```
+
+### MCP Server Naming
+
+Codex CLI uses `-mcp` suffix in server names (e.g., `brave-search-mcp`). MCP Audit normalizes these automatically:
+
+- Raw: `mcp__brave-search-mcp__brave_web_search`
+- Normalized: `mcp__brave-search__brave_web_search`
+
+---
+
 ## Troubleshooting
 
 ### No Sessions Found
@@ -165,7 +246,7 @@ Edit `mcp-audit.toml` to add custom Codex models:
 
 Use `--session-file` to specify exact file:
 ```bash
-mcp-audit collect --platform codex_cli --session-file /path/to/session.jsonl
+mcp-audit collect --platform codex-cli --session-file /path/to/session.jsonl
 ```
 
 ### Model Not Detected

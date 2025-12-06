@@ -168,17 +168,17 @@ class SessionManager:
             if "_file" not in data:
                 return None
 
-            # Validate schema version
+            # Validate schema version (accept any v1.x)
             file_header = data.get("_file", {})
             schema_version = file_header.get("schema_version", "")
-            if not schema_version.startswith("1.1"):
+            if not schema_version.startswith("1."):
                 return None
 
-            # Reconstruct Session from v1.1.0 format
+            # Reconstruct Session from v1.x format
             return self._reconstruct_session_v1_1(data)
 
         except (json.JSONDecodeError, KeyError, ValueError) as e:
-            print(f"Error loading v1.1.0 session from {session_file}: {e}")
+            print(f"Error loading v1.x session from {session_file}: {e}")
             return None
 
     def _is_v1_0_server_file(self, filename: str) -> bool:
@@ -242,17 +242,17 @@ class SessionManager:
             if "_file" not in data:
                 return None
 
-            # Validate schema version
+            # Validate schema version (accept any v1.x)
             file_header = data.get("_file", {})
             schema_version = file_header.get("schema_version", "")
-            if not schema_version.startswith("1.1"):
+            if not schema_version.startswith("1."):
                 return None
 
-            # Reconstruct Session from v1.1.0 format
+            # Reconstruct Session from v1.x format
             return self._reconstruct_session_v1_1(data)
 
         except (json.JSONDecodeError, KeyError, ValueError) as e:
-            print(f"Error loading v1.1.0 session from {session_file}: {e}")
+            print(f"Error loading v1.x session from {session_file}: {e}")
             return None
 
     def _load_session_v1_0(self, session_dir: Path) -> Optional[Session]:

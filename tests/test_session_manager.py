@@ -123,7 +123,7 @@ class TestSessionPersistence:
         # Check _file header exists (v1.1.0)
         assert "_file" in data
         assert data["_file"]["type"] == "mcp_audit_session"
-        assert data["_file"]["schema_version"].startswith("1.1")
+        assert data["_file"]["schema_version"].startswith("1.")  # v1.x compatible
 
         # Check session block (v1.1.0)
         assert "session" in data

@@ -19,10 +19,10 @@ MCP Audit supports Gemini CLI through native JSON session file parsing.
 
 ```bash
 # Start tracking (from your project directory)
-mcp-audit collect --platform gemini_cli
+mcp-audit collect --platform gemini-cli
 
 # Batch process latest session
-mcp-audit collect --platform gemini_cli --batch --latest
+mcp-audit collect --platform gemini-cli --batch --latest
 ```
 
 ## Token Mapping

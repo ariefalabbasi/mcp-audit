@@ -1,7 +1,7 @@
 # MCP Audit Data Contract
 
-**Version**: 1.1.0
-**Last Updated**: 2025-12-03
+**Version**: 1.3.0
+**Last Updated**: 2025-12-06
 **Status**: Active
 
 This document defines the data contract for MCP Audit, including backward compatibility guarantees, versioning policy, and migration guidelines.
@@ -10,13 +10,131 @@ This document defines the data contract for MCP Audit, including backward compat
 
 ## Table of Contents
 
-1. [Schema v1.1.0](#schema-v110)
-2. [Backward Compatibility Guarantee](#backward-compatibility-guarantee)
-3. [Versioning Policy](#versioning-policy)
-4. [Schema Stability](#schema-stability)
-5. [Migration Support](#migration-support)
-6. [Breaking Changes](#breaking-changes)
-7. [Deprecation Policy](#deprecation-policy)
+1. [Schema v1.3.0](#schema-v130)
+2. [Schema v1.2.0](#schema-v120)
+3. [Schema v1.1.0](#schema-v110)
+3. [Backward Compatibility Guarantee](#backward-compatibility-guarantee)
+4. [Versioning Policy](#versioning-policy)
+5. [Schema Stability](#schema-stability)
+6. [Migration Support](#migration-support)
+7. [Breaking Changes](#breaking-changes)
+8. [Deprecation Policy](#deprecation-policy)
+
+---
+
+## Schema v1.3.0
+
+Schema v1.3.0 adds separate tracking of reasoning/thinking tokens while maintaining full backward compatibility with v1.2.0, v1.1.0, and v1.0.0.
+
+### Key Changes from v1.2.0
+
+| Change | v1.2.0 | v1.3.0 |
+|--------|--------|--------|
+| Reasoning tokens | Combined into `output_tokens` | Separate `reasoning_tokens` field |
+| Schema version | `"1.2.0"` | `"1.3.0"` |
+
+### New Field: `reasoning_tokens`
+
+```json
+{
+  "token_usage": {
+    "input_tokens": 76,
+    "output_tokens": 88,
+    "reasoning_tokens": 50,
+    "cache_created_tokens": 3925,
+    "cache_read_tokens": 854215,
+    "total_tokens": 858354,
+    "cache_efficiency": 0.995
+  }
+}
+```
+
+#### `reasoning_tokens` Field
+
+Tracks thinking/reasoning tokens separately from output tokens. This enables accurate cost analysis for models with thinking tokens (Codex CLI o-series, Gemini CLI).
+
+| Platform | Source Field | Notes |
+|----------|-------------|-------|
+| Claude Code | N/A | Always 0 (no thinking tokens exposed) |
+| Codex CLI | `reasoning_output_tokens` | Present in o1/o3-mini and similar models |
+| Gemini CLI | `thoughts` | Present in Gemini 2.0+ responses |
+
+**Backward Compatibility:**
+
+- Old readers (v1.2.0 and earlier) ignore the new `reasoning_tokens` field
+- Old sessions without `reasoning_tokens` are read as having 0 reasoning tokens
+- TUI only displays reasoning row when `reasoning_tokens > 0` (auto-hides for Claude Code)
+
+**Display Behavior:**
+
+When `reasoning_tokens > 0`, the TUI shows:
+```
+╭─ Token Usage ────────────────────╮
+│  Input:      10,000              │
+│  Output:     2,000               │
+│  Reasoning:  500                 │
+│  ...                             │
+╰──────────────────────────────────╯
+```
+
+When `reasoning_tokens == 0` (e.g., Claude Code), the row is hidden automatically.
+
+---
+
+## Schema v1.2.0
+
+Schema v1.2.0 adds built-in tool tracking to session output while maintaining full backward compatibility with v1.1.0 and v1.0.0.
+
+### Key Changes from v1.1.0
+
+| Change | v1.1.0 | v1.2.0 |
+|--------|--------|--------|
+| Built-in tools | Tracked in TUI only | Persisted in `builtin_tool_summary` |
+| Schema version | `"1.1.0"` | `"1.2.0"` |
+
+### New Field: `builtin_tool_summary`
+
+```json
+{
+  "builtin_tool_summary": {
+    "total_calls": 15,
+    "total_tokens": 1250000,
+    "tools": [
+      {"tool": "Read", "calls": 5, "tokens": 450000},
+      {"tool": "Bash", "calls": 4, "tokens": 350000},
+      {"tool": "Glob", "calls": 3, "tokens": 250000},
+      {"tool": "Grep", "calls": 2, "tokens": 150000},
+      {"tool": "Edit", "calls": 1, "tokens": 50000}
+    ]
+  }
+}
+```
+
+#### `builtin_tool_summary` Block
+
+Tracks aggregate and per-tool statistics for built-in tools (Bash, Read, Write, Edit, Glob, Grep, etc.).
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `total_calls` | int | Total number of built-in tool calls |
+| `total_tokens` | int | Total tokens consumed by built-in tools |
+| `tools` | array | Per-tool breakdown sorted by tokens (descending) |
+
+**Per-tool entry:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `tool` | string | Built-in tool name (e.g., `"Read"`, `"Bash"`) |
+| `calls` | int | Number of calls to this tool |
+| `tokens` | int | Total tokens for this tool |
+
+**Platform-Specific Behavior:**
+
+| Platform | `calls` | `tokens` |
+|----------|---------|----------|
+| Claude Code | Per-tool | Per-tool (token attribution available) |
+| Codex CLI | Per-tool | Always 0 (no token attribution) |
+| Gemini CLI | Per-tool | Always 0 (no token attribution) |
 
 ---
 
@@ -78,6 +196,7 @@ Schema v1.1.0 introduces significant improvements for AI-Agent readability while
   "token_usage": {
     "input_tokens": 76,
     "output_tokens": 88,
+    "reasoning_tokens": 0,
     "cache_created_tokens": 3925,
     "cache_read_tokens": 854215,
     "total_tokens": 858304,
@@ -96,6 +215,16 @@ Schema v1.1.0 introduces significant improvements for AI-Agent readability while
     ],
     "top_by_calls": [
       {"tool": "mcp__zen__chat", "server": "zen", "calls": 10, "tokens": 30000}
+    ]
+  },
+
+  "builtin_tool_summary": {
+    "total_calls": 15,
+    "total_tokens": 1250000,
+    "tools": [
+      {"tool": "Read", "calls": 5, "tokens": 450000},
+      {"tool": "Bash", "calls": 4, "tokens": 350000},
+      {"tool": "Glob", "calls": 3, "tokens": 250000}
     ]
   },
 
@@ -187,6 +316,19 @@ Schema v1.1.0 introduces significant improvements for AI-Agent readability while
 | `total_tokens` | int | Total tokens for this call |
 | `duration_ms` | int | Call duration in milliseconds (optional) |
 | `content_hash` | string | SHA256 hash of input for deduplication |
+
+**Platform-Specific Behavior:**
+
+| Field | Claude Code | Codex CLI | Gemini CLI |
+|-------|-------------|-----------|------------|
+| `input_tokens` | Per-call | Always 0 | Always 0 |
+| `output_tokens` | Per-call | Always 0 | Always 0 |
+| `cache_created_tokens` | Per-call | Always 0 | N/A |
+| `cache_read_tokens` | Per-call | Always 0 | N/A |
+| `total_tokens` | Per-call | Always 0 | Always 0 |
+| `duration_ms` | Available | Available | N/A |
+
+See platform setup guides for details on these limitations. Codex CLI and Gemini CLI provide session/message-level tokens only, not per-call attribution.
 
 #### `mcp_summary` Block
 
@@ -545,6 +687,28 @@ v2.0.0+6mo - v1.x support ends
 |---------|--------|-----------|
 | v1.0.0 | Initial release | N/A |
 | v1.1.0 | Additive changes (not breaking) | Automatic - readers support both |
+| v1.2.0 | Added `builtin_tool_summary` (not breaking) | Automatic - new field ignored by old readers |
+| v1.3.0 | Added `reasoning_tokens` field (not breaking) | Automatic - new field ignored by old readers |
+
+### v1.3.0 Changes (Non-Breaking)
+
+v1.3.0 adds reasoning token tracking to separate thinking tokens from output:
+
+| Change | Type | Impact |
+|--------|------|--------|
+| Added `reasoning_tokens` to `token_usage` | Additive | New field, ignored by old readers |
+| Gemini CLI `thoughts` tracked separately | Change | More accurate token breakdown |
+| Codex CLI `reasoning_output_tokens` tracked separately | Change | More accurate token breakdown |
+| TUI shows reasoning row conditionally | Display | Only shown when > 0 |
+
+### v1.2.0 Changes (Non-Breaking)
+
+v1.2.0 adds built-in tool tracking to session output:
+
+| Change | Type | Impact |
+|--------|------|--------|
+| Added `builtin_tool_summary` block | Additive | New field, ignored by old readers |
+| Added `session.builtin_tool_stats` internal field | Additive | Used to build summary |
 
 ### v1.1.0 Changes (Non-Breaking)
 

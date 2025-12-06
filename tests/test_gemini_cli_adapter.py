@@ -300,6 +300,113 @@ class TestProjectHashDetection:
         hash_val, path, mtime = hashes[0]
         assert len(hash_val) == 64
 
+    def test_find_project_hash_ignores_empty_chats_dirs(self, tmp_path: Path) -> None:
+        """Test that _find_project_hash ignores hash directories with empty chats folders.
+
+        This is a regression test for a bug where _find_project_hash would return
+        a hash directory that had a chats/ folder but no session files, causing
+        get_latest_session_file() to return None.
+        """
+        # Create gemini directory structure
+        gemini_dir = tmp_path / ".gemini"
+
+        # Hash 1: Valid - has session file
+        valid_hash = "a" * 64
+        valid_chats = gemini_dir / "tmp" / valid_hash / "chats"
+        valid_chats.mkdir(parents=True)
+        session_file = valid_chats / "session-2025-01-01T00-00-test123.json"
+        session_file.write_text(
+            json.dumps(
+                {
+                    "sessionId": "test",
+                    "projectHash": valid_hash,
+                    "startTime": "2025-01-01T00:00:00Z",
+                    "lastUpdated": "2025-01-01T00:00:00Z",
+                    "messages": [],
+                }
+            )
+        )
+
+        # Hash 2: Invalid - has chats dir but NO session files (newer directory)
+        empty_hash = "b" * 64
+        empty_chats = gemini_dir / "tmp" / empty_hash / "chats"
+        empty_chats.mkdir(parents=True)
+        # Touch the directory to make it "newer"
+        import time
+
+        time.sleep(0.01)  # Ensure different mtime
+        empty_chats.touch()
+
+        # Create adapter pointing to test gemini dir
+        adapter = GeminiCLIAdapter(project="test", gemini_dir=gemini_dir)
+
+        # _find_project_hash should return the valid hash (with session files),
+        # NOT the empty hash (even though it's newer)
+        result = adapter._find_project_hash()
+        assert result == valid_hash, (
+            f"Expected {valid_hash[:16]}... (with session files), "
+            f"got {result[:16] if result else None}..."
+        )
+
+    def test_check_for_newer_session_file(self, tmp_path: Path) -> None:
+        """Test detection of new session files during monitoring.
+
+        This tests the fix for dynamically detecting when a new Gemini CLI
+        conversation is started (which creates a new session file).
+        """
+        import time
+
+        # Create gemini directory structure
+        gemini_dir = tmp_path / ".gemini"
+        project_hash = "c" * 64
+        chats_dir = gemini_dir / "tmp" / project_hash / "chats"
+        chats_dir.mkdir(parents=True)
+
+        # Create initial session file
+        old_session = chats_dir / "session-2025-01-01T00-00-old.json"
+        old_session.write_text(
+            json.dumps(
+                {
+                    "sessionId": "old-session",
+                    "projectHash": project_hash,
+                    "startTime": "2025-01-01T00:00:00Z",
+                    "lastUpdated": "2025-01-01T00:00:00Z",
+                    "messages": [],
+                }
+            )
+        )
+
+        # Create adapter
+        adapter = GeminiCLIAdapter(project="test", gemini_dir=gemini_dir)
+
+        # Initially, no newer file exists
+        result = adapter._check_for_newer_session_file(old_session)
+        assert result is None
+
+        # Create a newer session file (simulating new Gemini CLI conversation)
+        time.sleep(0.01)  # Ensure different mtime
+        new_session = chats_dir / "session-2025-01-01T01-00-new.json"
+        new_session.write_text(
+            json.dumps(
+                {
+                    "sessionId": "new-session",
+                    "projectHash": project_hash,
+                    "startTime": "2025-01-01T01:00:00Z",
+                    "lastUpdated": "2025-01-01T01:00:00Z",
+                    "messages": [],
+                }
+            )
+        )
+
+        # Now a newer file should be detected
+        result = adapter._check_for_newer_session_file(old_session)
+        assert result is not None
+        assert result.name == "session-2025-01-01T01-00-new.json"
+
+        # If we're already monitoring the newest file, no newer file returned
+        result = adapter._check_for_newer_session_file(new_session)
+        assert result is None
+
 
 # ============================================================================
 # Event Parsing Tests
@@ -345,11 +452,12 @@ class TestEventParsing:
         tool_name, usage = result
         assert tool_name == "__session__"
         assert usage["input_tokens"] == 1000
-        assert usage["output_tokens"] == 150  # output + thoughts
+        assert usage["output_tokens"] == 50  # v1.3.0: No longer includes thoughts
+        assert usage["reasoning_tokens"] == 100  # v1.3.0: Tracked separately
         assert usage["cache_read_tokens"] == 500
 
     def test_parse_mcp_tool_call(self, adapter: GeminiCLIAdapter) -> None:
-        """Test MCP tool call parsing."""
+        """Test MCP tool call parsing - tool is processed in-place, session tokens returned."""
         msg = GeminiMessage(
             id="msg-003",
             timestamp=datetime.now(tz=timezone.utc),
@@ -376,13 +484,20 @@ class TestEventParsing:
 
         result = adapter.parse_event(msg)
 
+        # parse_event now always returns session tokens (task-72.2)
         assert result is not None
         tool_name, usage = result
-        assert tool_name == "mcp__zen__chat"
-        assert usage["success"] is True
+        assert tool_name == "__session__"
+        assert usage["input_tokens"] == 100
+        assert usage["output_tokens"] == 50
 
-    def test_native_tool_ignored(self, adapter: GeminiCLIAdapter) -> None:
-        """Test native tools (not mcp__) are ignored."""
+        # MCP tool was processed in-place (task-72.1)
+        # server_sessions is keyed by server name (e.g., "zen"), not tool name
+        assert "zen" in adapter.server_sessions
+        assert "mcp__zen__chat" in adapter.server_sessions["zen"].tools
+
+    def test_builtin_tool_tracked(self, adapter: GeminiCLIAdapter) -> None:
+        """Test built-in tools are tracked and counted (task-70.2, task-72.1)."""
         msg = GeminiMessage(
             id="msg-003",
             timestamp=datetime.now(tz=timezone.utc),
@@ -392,8 +507,207 @@ class TestEventParsing:
             tool_calls=[
                 {
                     "id": "call-001",
-                    "name": "read_file",  # Native tool
+                    "name": "read_file",  # Built-in tool
                     "args": {"path": "/test"},
+                    "status": "success",
+                }
+            ],
+            tokens={
+                "input": 100,
+                "output": 50,
+                "cached": 0,
+                "thoughts": 0,
+                "tool": 10,
+                "total": 160,
+            },
+        )
+
+        result = adapter.parse_event(msg)
+
+        # parse_event now always returns session tokens (task-72.2)
+        assert result is not None
+        tool_name, usage = result
+        assert tool_name == "__session__"
+        assert usage["input_tokens"] == 100
+
+        # Built-in tool was processed in-place (task-72.1)
+        assert adapter._builtin_tool_calls == 1
+
+    def test_multiple_tool_calls_in_single_message(self, adapter: GeminiCLIAdapter) -> None:
+        """Test ALL tool calls in a message are processed, not just the first (task-72.1).
+
+        This is a regression test for a critical bug where parse_event() returned
+        after processing the first tool call, causing:
+        1. Only the first tool call to be processed
+        2. Session tokens to be lost for messages with tool calls
+        """
+        msg = GeminiMessage(
+            id="msg-multi-tool",
+            timestamp=datetime.now(tz=timezone.utc),
+            message_type="gemini",
+            content="I read the file and listed the directory",
+            model="gemini-2.5-flash",
+            tool_calls=[
+                {
+                    "id": "call-001",
+                    "name": "read_file",  # Built-in tool 1
+                    "args": {"path": "/test/file.txt"},
+                    "status": "success",
+                },
+                {
+                    "id": "call-002",
+                    "name": "list_directory",  # Built-in tool 2
+                    "args": {"path": "/test"},
+                    "status": "success",
+                },
+            ],
+            tokens={
+                "input": 9637,
+                "output": 105,
+                "cached": 1753,
+                "thoughts": 0,
+                "tool": 50,
+                "total": 9742,
+            },
+        )
+
+        # Before fix: parse_event() would return after first tool call,
+        # losing the second tool call and ALL session tokens
+        result = adapter.parse_event(msg)
+
+        # Verify session tokens are returned (task-72.2)
+        assert result is not None
+        tool_name, usage = result
+        assert tool_name == "__session__"
+        assert usage["input_tokens"] == 9637
+        assert usage["output_tokens"] == 105
+        assert usage["cache_read_tokens"] == 1753
+
+        # Verify BOTH tool calls were processed (task-72.1)
+        assert adapter._builtin_tool_calls == 2, (
+            f"Expected 2 built-in tool calls, got {adapter._builtin_tool_calls}. "
+            "parse_event() may be returning after the first tool call."
+        )
+
+    def test_multiple_mcp_tools_in_single_message(self, adapter: GeminiCLIAdapter) -> None:
+        """Test multiple MCP tool calls in a single message are all processed."""
+        msg = GeminiMessage(
+            id="msg-multi-mcp",
+            timestamp=datetime.now(tz=timezone.utc),
+            message_type="gemini",
+            content="I used multiple MCP tools",
+            model="gemini-2.5-flash",
+            tool_calls=[
+                {
+                    "id": "call-001",
+                    "name": "mcp__zen__chat",
+                    "args": {"prompt": "test1"},
+                    "status": "success",
+                },
+                {
+                    "id": "call-002",
+                    "name": "mcp__brave__search",
+                    "args": {"query": "test2"},
+                    "status": "success",
+                },
+                {
+                    "id": "call-003",
+                    "name": "mcp__jina__read_url",
+                    "args": {"url": "https://example.com"},
+                    "status": "success",
+                },
+            ],
+            tokens={
+                "input": 5000,
+                "output": 200,
+                "cached": 1000,
+                "thoughts": 50,
+                "tool": 100,
+                "total": 5250,
+            },
+        )
+
+        result = adapter.parse_event(msg)
+
+        # Verify session tokens are returned
+        assert result is not None
+        tool_name, usage = result
+        assert tool_name == "__session__"
+        assert usage["input_tokens"] == 5000
+        assert usage["output_tokens"] == 200  # v1.3.0: No longer includes thoughts
+        assert usage["reasoning_tokens"] == 50  # v1.3.0: Tracked separately
+
+        # Verify ALL 3 MCP tools were processed
+        # server_sessions is keyed by server name, tools are nested
+        assert "zen" in adapter.server_sessions
+        assert "mcp__zen__chat" in adapter.server_sessions["zen"].tools
+        assert "brave" in adapter.server_sessions
+        assert "mcp__brave__search" in adapter.server_sessions["brave"].tools
+        assert "jina" in adapter.server_sessions
+        assert "mcp__jina__read_url" in adapter.server_sessions["jina"].tools
+
+    def test_mixed_mcp_and_builtin_tools_in_message(self, adapter: GeminiCLIAdapter) -> None:
+        """Test message with both MCP and built-in tools processes all."""
+        msg = GeminiMessage(
+            id="msg-mixed",
+            timestamp=datetime.now(tz=timezone.utc),
+            message_type="gemini",
+            content="I used both MCP and built-in tools",
+            model="gemini-2.5-flash",
+            tool_calls=[
+                {
+                    "id": "call-001",
+                    "name": "read_file",  # Built-in
+                    "args": {"path": "/test"},
+                    "status": "success",
+                },
+                {
+                    "id": "call-002",
+                    "name": "mcp__zen__chat",  # MCP
+                    "args": {"prompt": "test"},
+                    "status": "success",
+                },
+                {
+                    "id": "call-003",
+                    "name": "list_directory",  # Built-in
+                    "args": {"path": "/"},
+                    "status": "success",
+                },
+            ],
+            tokens={
+                "input": 3000,
+                "output": 100,
+                "cached": 500,
+                "thoughts": 0,
+                "tool": 75,
+                "total": 3100,
+            },
+        )
+
+        result = adapter.parse_event(msg)
+
+        # Verify session tokens returned
+        assert result is not None
+        assert result[0] == "__session__"
+
+        # Verify all tools processed
+        assert adapter._builtin_tool_calls == 2  # read_file + list_directory
+        assert "zen" in adapter.server_sessions
+        assert "mcp__zen__chat" in adapter.server_sessions["zen"].tools
+
+    def test_unknown_tool_ignored(self, adapter: GeminiCLIAdapter) -> None:
+        """Test unknown tools (not mcp__ or built-in) are ignored."""
+        msg = GeminiMessage(
+            id="msg-004",
+            timestamp=datetime.now(tz=timezone.utc),
+            message_type="gemini",
+            content="Result",
+            model="gemini-2.5-pro",
+            tool_calls=[
+                {
+                    "id": "call-001",
+                    "name": "custom_unknown_tool",  # Unknown tool
+                    "args": {"arg": "value"},
                     "status": "success",
                 }
             ],
@@ -409,7 +723,7 @@ class TestEventParsing:
 
         result = adapter.parse_event(msg)
 
-        # Should return session tokens, not tool call
+        # Should return session tokens, not tool call (unknown tool ignored)
         assert result is not None
         tool_name, _ = result
         assert tool_name == "__session__"
@@ -581,6 +895,435 @@ class TestGeminiCLIAdapterIntegration:
 
         # Verify files saved
         assert adapter.session_dir is not None
+
+
+# ============================================================================
+# Task-70 Feature Tests
+# ============================================================================
+
+
+class TestGitMetadata:
+    """Tests for git metadata collection (task-70.1)."""
+
+    def test_git_metadata_collected_on_init(self, tmp_path: Path) -> None:
+        """Test that git metadata is collected during initialization."""
+        adapter = GeminiCLIAdapter(project="test", gemini_dir=tmp_path)
+
+        # Git metadata should be a dict (may be empty if not in a git repo)
+        assert hasattr(adapter, "_git_metadata")
+        assert isinstance(adapter._git_metadata, dict)
+        assert "branch" in adapter._git_metadata
+        assert "commit_short" in adapter._git_metadata
+        assert "status" in adapter._git_metadata
+
+
+class TestBuiltinToolTracking:
+    """Tests for built-in tool tracking (task-70.2)."""
+
+    def test_builtin_tool_counters_initialized(self, adapter: GeminiCLIAdapter) -> None:
+        """Test built-in tool counters are initialized."""
+        assert adapter._builtin_tool_calls == 0
+        assert adapter._builtin_tool_tokens == 0
+
+    def test_all_gemini_builtin_tools_recognized(self, adapter: GeminiCLIAdapter) -> None:
+        """Test all known Gemini CLI built-in tools are tracked.
+
+        Tool names from official source:
+        https://github.com/google-gemini/gemini-cli/blob/main/packages/core/src/tools/tool-names.ts
+        """
+        from mcp_audit.gemini_cli_adapter import GEMINI_BUILTIN_TOOLS
+
+        # All these tools should be in the set (official names from Gemini CLI source)
+        expected_tools = {
+            "glob",  # File pattern matching
+            "google_web_search",  # Web search
+            "list_directory",  # Directory listing (ls)
+            "read_file",  # Read single file
+            "read_many_files",  # Read multiple files
+            "replace",  # File content replacement (edit)
+            "run_shell_command",  # Shell execution
+            "save_memory",  # Memory/context saving
+            "search_file_content",  # Grep/ripgrep search
+            "web_fetch",  # Fetch web content
+            "write_file",  # Write file
+            "write_todos",  # Task management
+        }
+
+        for tool in expected_tools:
+            assert tool in GEMINI_BUILTIN_TOOLS, f"{tool} should be in GEMINI_BUILTIN_TOOLS"
+
+    def test_builtin_tools_all_processed(self, adapter: GeminiCLIAdapter) -> None:
+        """Test all built-in tools are processed and counted (task-72.1)."""
+        builtin_tools = ["read_file", "list_directory", "google_web_search", "run_shell_command"]
+
+        for i, tool_name in enumerate(builtin_tools):
+            msg = GeminiMessage(
+                id=f"msg-{i:03d}",
+                timestamp=datetime.now(tz=timezone.utc),
+                message_type="gemini",
+                content="Result",
+                model="gemini-2.5-pro",
+                tool_calls=[
+                    {
+                        "id": f"call-{i:03d}",
+                        "name": tool_name,
+                        "args": {},
+                        "status": "success",
+                    }
+                ],
+                tokens={
+                    "input": 10,
+                    "output": 5,
+                    "cached": 0,
+                    "thoughts": 0,
+                    "tool": 5,
+                    "total": 20,
+                },
+            )
+
+            result = adapter.parse_event(msg)
+            # Always returns session tokens
+            assert result is not None
+            parsed_name, _ = result
+            assert parsed_name == "__session__"
+
+        # All 4 built-in tools were processed
+        assert adapter._builtin_tool_calls == 4
+
+
+class TestBuiltinToolsPersistence:
+    """Tests for built-in tool persistence to session file (task-72.3)."""
+
+    def test_builtin_tools_saved_to_session_file(
+        self, adapter: GeminiCLIAdapter, tmp_path: Path
+    ) -> None:
+        """Test that built-in tools are saved to session file, not just displayed."""
+        msg = GeminiMessage(
+            id="msg-builtin-persist",
+            timestamp=datetime.now(tz=timezone.utc),
+            message_type="gemini",
+            content="I used built-in tools",
+            model="gemini-2.5-flash",
+            tool_calls=[
+                {
+                    "id": "call-001",
+                    "name": "read_file",
+                    "args": {"path": "/test/file.txt"},
+                    "status": "success",
+                },
+                {
+                    "id": "call-002",
+                    "name": "list_directory",
+                    "args": {"path": "/test"},
+                    "status": "success",
+                },
+            ],
+            tokens={
+                "input": 1000,
+                "output": 50,
+                "cached": 200,
+                "thoughts": 0,
+                "tool": 25,
+                "total": 1275,
+            },
+        )
+
+        # Process the message
+        result = adapter.parse_event(msg)
+        assert result is not None
+
+        # Finalize and save session
+        adapter.finalize_session()
+        output_dir = tmp_path / "sessions"
+        adapter.save_session(output_dir)
+
+        # Read saved session file
+        assert adapter.session_path is not None
+        with open(adapter.session_path) as f:
+            saved_data = json.load(f)
+
+        # Verify built-in tools are in tool_calls array
+        tool_calls = saved_data.get("tool_calls", [])
+        assert len(tool_calls) == 2, (
+            f"Expected 2 built-in tool calls in session file, got {len(tool_calls)}. "
+            "Built-in tools may not be saved to session file."
+        )
+
+        # Verify tool names are properly formatted
+        tool_names = [call["tool"] for call in tool_calls]
+        assert "builtin__read_file" in tool_names
+        assert "builtin__list_directory" in tool_names
+
+        # Verify server is set to "builtin"
+        for call in tool_calls:
+            assert call["server"] == "builtin"
+
+    def test_mixed_tools_all_saved_to_session(
+        self, adapter: GeminiCLIAdapter, tmp_path: Path
+    ) -> None:
+        """Test that both MCP and built-in tools are saved to session file."""
+        msg = GeminiMessage(
+            id="msg-mixed-persist",
+            timestamp=datetime.now(tz=timezone.utc),
+            message_type="gemini",
+            content="I used both MCP and built-in tools",
+            model="gemini-2.5-flash",
+            tool_calls=[
+                {
+                    "id": "call-001",
+                    "name": "read_file",  # Built-in
+                    "args": {"path": "/test"},
+                    "status": "success",
+                },
+                {
+                    "id": "call-002",
+                    "name": "mcp__zen__chat",  # MCP
+                    "args": {"prompt": "test"},
+                    "status": "success",
+                },
+            ],
+            tokens={
+                "input": 500,
+                "output": 25,
+                "cached": 100,
+                "thoughts": 0,
+                "tool": 10,
+                "total": 635,
+            },
+        )
+
+        result = adapter.parse_event(msg)
+        assert result is not None
+
+        adapter.finalize_session()
+        output_dir = tmp_path / "sessions"
+        adapter.save_session(output_dir)
+
+        assert adapter.session_path is not None
+        with open(adapter.session_path) as f:
+            saved_data = json.load(f)
+
+        tool_calls = saved_data.get("tool_calls", [])
+        assert len(tool_calls) == 2
+
+        tool_names = [call["tool"] for call in tool_calls]
+        assert "builtin__read_file" in tool_names
+        assert "mcp__zen__chat" in tool_names
+
+
+class TestDisplayEventNotification:
+    """Tests for display event notification (task-70.3)."""
+
+    def test_process_parsed_event_notifies_display(self, adapter: GeminiCLIAdapter) -> None:
+        """Test that _process_parsed_event calls display.on_event."""
+        from unittest.mock import Mock
+
+        # Set up mock display
+        mock_display = Mock()
+        adapter._display = mock_display
+
+        # Process an MCP event
+        usage = {
+            "input_tokens": 100,
+            "output_tokens": 50,
+            "cache_created_tokens": 0,
+            "cache_read_tokens": 0,
+            "success": True,
+        }
+        adapter._process_parsed_event("mcp__test__tool", usage)
+
+        # Verify on_event was called
+        mock_display.on_event.assert_called_once()
+        call_args = mock_display.on_event.call_args
+        assert call_args[0][0] == "mcp__test__tool"  # tool_name
+        assert call_args[0][1] == 150  # total_tokens
+
+    def test_builtin_tool_notifies_display(self, adapter: GeminiCLIAdapter) -> None:
+        """Test that built-in tools notify display with [built-in] prefix."""
+        from unittest.mock import Mock
+
+        mock_display = Mock()
+        adapter._display = mock_display
+
+        usage = {
+            "input_tokens": 0,
+            "output_tokens": 50,
+            "cache_created_tokens": 0,
+            "cache_read_tokens": 0,
+            "success": True,
+        }
+        adapter._process_parsed_event("__builtin__:read_file", usage)
+
+        mock_display.on_event.assert_called_once()
+        call_args = mock_display.on_event.call_args
+        assert call_args[0][0] == "[built-in] read_file"
+
+
+class TestDisplaySnapshot:
+    """Tests for DisplaySnapshot creation (task-70.1, 70.5)."""
+
+    def test_display_snapshot_includes_git_metadata(self, adapter: GeminiCLIAdapter) -> None:
+        """Test DisplaySnapshot includes git metadata."""
+        adapter._start_time = datetime.now()
+        adapter._git_metadata = {
+            "branch": "main",
+            "commit_short": "abc1234",
+            "status": "clean",
+        }
+
+        snapshot = adapter._build_display_snapshot()
+
+        assert snapshot.git_branch == "main"
+        assert snapshot.git_commit_short == "abc1234"
+        assert snapshot.git_status == "clean"
+
+    def test_display_snapshot_includes_builtin_tool_counts(self, adapter: GeminiCLIAdapter) -> None:
+        """Test DisplaySnapshot includes built-in tool counts."""
+        adapter._start_time = datetime.now()
+        adapter._builtin_tool_calls = 5
+        adapter._builtin_tool_tokens = 500
+
+        snapshot = adapter._build_display_snapshot()
+
+        assert snapshot.builtin_tool_calls == 5
+        assert snapshot.builtin_tool_tokens == 500
+
+    def test_display_snapshot_includes_health_status(self, adapter: GeminiCLIAdapter) -> None:
+        """Test DisplaySnapshot includes warnings and health status."""
+        adapter._start_time = datetime.now()
+        adapter._warnings = []
+
+        snapshot = adapter._build_display_snapshot()
+
+        assert snapshot.warnings_count == 0
+        assert snapshot.health_status == "healthy"
+
+
+# ============================================================================
+# Source Files Tracking Tests (Task-50.3)
+# ============================================================================
+
+
+class TestSourceFilesTracking:
+    """Tests for tracking source files from tool calls."""
+
+    def test_source_files_populated_from_tool_calls(self, tmp_path: Path) -> None:
+        """Test that source_files are correctly populated from tool call parameters."""
+        test_file_path = "path/to/test_file.txt"
+        session_data = make_sample_session(include_mcp_tools=False)  # Start with no MCP tools
+
+        # Add a gemini message with a built-in read_file tool call
+        session_data["messages"].append(
+            {
+                "id": "msg-004",
+                "type": "gemini",
+                "content": "Reading a file.",
+                "model": "gemini-2.5-pro",
+                "toolCalls": [
+                    {
+                        "id": "call-001",
+                        "name": "read_file",
+                        "args": {"file_path": test_file_path},
+                        "status": "success",
+                    }
+                ],
+                "tokens": {
+                    "input": 10,
+                    "output": 5,
+                    "cached": 0,
+                    "thoughts": 0,
+                    "tool": 5,
+                    "total": 20,
+                },
+                "timestamp": "2025-11-07T05:11:00.000Z",
+            }
+        )
+
+        chats_dir = tmp_path / ".gemini" / "tmp" / ("a" * 64) / "chats"
+        chats_dir.mkdir(parents=True)
+        session_file = chats_dir / "session-2025-11-07T05-10-test.json"
+        session_file.write_text(json.dumps(session_data))
+
+        adapter = GeminiCLIAdapter(
+            project="test-project",
+            gemini_dir=tmp_path / ".gemini",
+            session_file=session_file,
+            from_start=True,
+        )
+
+        # Use process_session_file_batch for batch testing (not start_tracking which is infinite loop)
+        adapter.process_session_file_batch(session_file)
+        session = adapter.finalize_session()
+
+        # The initial session file name and the file from the tool call should be present
+        expected_source_files = sorted([session_file.name, test_file_path])
+        assert session.source_files == expected_source_files
+        assert test_file_path in session.source_files
+
+    def test_source_files_populated_from_multiple_tool_calls(self, tmp_path: Path) -> None:
+        """Test that source_files are correctly populated from multiple tool calls."""
+        file_path_1 = "path/to/file1.txt"
+        file_path_2 = "another/path/file2.json"
+        dir_path_1 = "dir/path"
+
+        session_data = make_sample_session(include_mcp_tools=False)
+
+        session_data["messages"].append(
+            {
+                "id": "msg-004",
+                "type": "gemini",
+                "content": "Multiple file operations.",
+                "model": "gemini-2.5-pro",
+                "toolCalls": [
+                    {
+                        "id": "call-001",
+                        "name": "read_file",
+                        "args": {"file_path": file_path_1},
+                        "status": "success",
+                    },
+                    {
+                        "id": "call-002",
+                        "name": "write_file",
+                        "args": {"file_path": file_path_2, "content": "data"},
+                        "status": "success",
+                    },
+                    {
+                        "id": "call-003",
+                        "name": "list_directory",
+                        "args": {"dir_path": dir_path_1},
+                        "status": "success",
+                    },
+                ],
+                "tokens": {
+                    "input": 30,
+                    "output": 15,
+                    "cached": 0,
+                    "thoughts": 0,
+                    "tool": 15,
+                    "total": 60,
+                },
+                "timestamp": "2025-11-07T05:11:00.000Z",
+            }
+        )
+
+        chats_dir = tmp_path / ".gemini" / "tmp" / ("a" * 64) / "chats"
+        chats_dir.mkdir(parents=True)
+        session_file = chats_dir / "session-2025-11-07T05-10-test.json"
+        session_file.write_text(json.dumps(session_data))
+
+        adapter = GeminiCLIAdapter(
+            project="test-project",
+            gemini_dir=tmp_path / ".gemini",
+            session_file=session_file,
+            from_start=True,
+        )
+
+        # Use process_session_file_batch for batch testing (not start_tracking which is infinite loop)
+        adapter.process_session_file_batch(session_file)
+        session = adapter.finalize_session()
+
+        expected_source_files = sorted([session_file.name, file_path_1, file_path_2, dir_path_1])
+        assert session.source_files == expected_source_files
 
 
 if __name__ == "__main__":

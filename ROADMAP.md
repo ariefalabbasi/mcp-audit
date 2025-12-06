@@ -45,4 +45,4 @@ This roadmap represents our current development plans and is subject to change. 
 
 ---
 
-**Last Updated**: December 2024
+**Last Updated**: December 2025

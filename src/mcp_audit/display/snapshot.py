@@ -78,6 +78,11 @@ class DisplaySnapshot:
     cache_created_tokens: int = 0
     cache_read_tokens: int = 0
 
+    # Reasoning/thinking tokens (v1.3.0 - task-80)
+    # Gemini CLI: thoughts, Codex CLI: reasoning_output_tokens, Claude Code: 0
+    # Only displayed in TUI when > 0 (auto-hides for Claude Code)
+    reasoning_tokens: int = 0
+
     # Built-in tools tracking (task-46.4)
     builtin_tool_calls: int = 0
     builtin_tool_tokens: int = 0
@@ -93,6 +98,9 @@ class DisplaySnapshot:
 
     # File monitoring status (task-46.6)
     files_monitored: int = 0
+
+    # Tracking mode: "live" (new events only) or "full" (from start)
+    tracking_mode: str = "live"
 
     @classmethod
     def create(
@@ -126,6 +134,7 @@ class DisplaySnapshot:
         message_count: int = 0,
         cache_created_tokens: int = 0,
         cache_read_tokens: int = 0,
+        reasoning_tokens: int = 0,  # v1.3.0: Gemini thoughts / Codex reasoning
         builtin_tool_calls: int = 0,
         builtin_tool_tokens: int = 0,
         git_branch: str = "",
@@ -134,6 +143,7 @@ class DisplaySnapshot:
         warnings_count: int = 0,
         health_status: str = "healthy",
         files_monitored: int = 0,
+        tracking_mode: str = "live",
     ) -> "DisplaySnapshot":
         """Factory method to create a DisplaySnapshot with proper tuple conversion."""
         # Import version if not provided
@@ -180,6 +190,7 @@ class DisplaySnapshot:
             message_count=message_count,
             cache_created_tokens=cache_created_tokens,
             cache_read_tokens=cache_read_tokens,
+            reasoning_tokens=reasoning_tokens,
             builtin_tool_calls=builtin_tool_calls,
             builtin_tool_tokens=builtin_tool_tokens,
             git_branch=git_branch,
@@ -188,4 +199,5 @@ class DisplaySnapshot:
             warnings_count=warnings_count,
             health_status=health_status,
             files_monitored=files_monitored,
+            tracking_mode=tracking_mode,
         )

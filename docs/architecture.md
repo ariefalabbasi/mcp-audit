@@ -564,7 +564,7 @@ The storage format changed significantly between v0.x and v1.x:
 
 ```bash
 # Migrate all sessions from v0.x location
-mcp-audit migrate --from logs/sessions/ --platform claude_code
+mcp-audit migrate --from logs/sessions/ --platform claude-code
 
 # Dry run (preview without changes)
 mcp-audit migrate --from logs/sessions/ --dry-run

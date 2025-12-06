@@ -59,8 +59,9 @@ def _cleanup_session() -> None:
             if has_data:
                 # Finalize and save session
                 session = _active_tracker.stop()
+                # Use full session file path if available, fallback to session_dir
                 session_dir = (
-                    str(_active_tracker.session_dir) if _active_tracker.session_dir else ""
+                    str(_active_tracker.session_path) if _active_tracker.session_path else ""
                 )
                 _session_saved = True
             else:
@@ -224,6 +225,12 @@ analyzed later with the 'report' command.
         help="Pin server(s) at top of MCP section (can be used multiple times)",
     )
 
+    collect_parser.add_argument(
+        "--from-start",
+        action="store_true",
+        help="Include existing session data (Codex/Gemini CLI only). Default: track new events only.",
+    )
+
     # ========================================================================
     # report command
     # ========================================================================
@@ -367,15 +374,19 @@ def cmd_collect(args: argparse.Namespace) -> int:
         if platform == "claude-code":
             from .claude_code_adapter import ClaudeCodeAdapter
 
+            if args.from_start:
+                print(
+                    "Note: --from-start only works with Codex/Gemini CLI (Claude Code streams live events)"
+                )
             tracker = ClaudeCodeAdapter(project=project)
         elif platform == "codex-cli":
             from .codex_cli_adapter import CodexCLIAdapter
 
-            tracker = CodexCLIAdapter(project=project)
+            tracker = CodexCLIAdapter(project=project, from_start=args.from_start)
         elif platform == "gemini-cli":
             from .gemini_cli_adapter import GeminiCLIAdapter
 
-            tracker = GeminiCLIAdapter(project=project)
+            tracker = GeminiCLIAdapter(project=project, from_start=args.from_start)
         else:
             display.stop(initial_snapshot)
             print(f"Error: Platform '{platform}' not yet implemented")
@@ -411,7 +422,8 @@ def cmd_collect(args: argparse.Namespace) -> int:
             session_dir = ""
             if has_data and not args.no_logs:
                 session = tracker.stop()
-                session_dir = str(tracker.session_dir) if tracker.session_dir else ""
+                # Use full session file path if available
+                session_dir = str(tracker.session_path) if tracker.session_path else ""
             else:
                 session = tracker.session  # Get session for display but don't save
                 if not has_data:

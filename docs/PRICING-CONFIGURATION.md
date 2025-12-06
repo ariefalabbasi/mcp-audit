@@ -1,6 +1,6 @@
 # Pricing Configuration Guide
 
-**Last Updated**: 2025-11-24
+**Last Updated**: 2025-12-04
 
 This guide explains how to configure model pricing for cost calculation in MCP Audit.
 
@@ -18,11 +18,42 @@ MCP Audit uses `mcp-audit.toml` to define pricing for AI models. This allows acc
 
 ---
 
-## Configuration File Location
+## Pricing Sources (Lookup Order)
 
-**Default**: `mcp-audit.toml` in project root
+MCP Audit uses the following priority order to find pricing configuration:
 
-The configuration file is automatically loaded when you run MCP Audit tools.
+| Priority | Location | Use Case |
+|----------|----------|----------|
+| 1 | `./mcp-audit.toml` | Project-specific override |
+| 2 | `~/.mcp-audit/mcp-audit.toml` | User-level custom pricing |
+| 3 | **Built-in defaults** | Zero-config fallback |
+
+### How It Works
+
+1. **Project override**: If `mcp-audit.toml` exists in CWD, it's used first
+2. **User config**: Falls back to `~/.mcp-audit/mcp-audit.toml` if exists
+3. **Built-in defaults**: Uses hardcoded pricing for common models (Claude, OpenAI, Gemini)
+
+### Creating a User Config
+
+To customize pricing globally:
+
+```bash
+# Create config directory
+mkdir -p ~/.mcp-audit
+
+# Option 1: Download template
+curl -o ~/.mcp-audit/mcp-audit.toml \
+  https://raw.githubusercontent.com/littlebearapps/mcp-audit/main/mcp-audit.toml
+
+# Option 2: Create minimal config (overrides only)
+cat > ~/.mcp-audit/mcp-audit.toml << 'EOF'
+[pricing.custom]
+"my-custom-model" = { input = 1.0, output = 5.0 }
+EOF
+```
+
+**Note**: User config completely replaces defaults - include all models you need.
 
 ---
 
@@ -171,7 +202,7 @@ USD_to_GBP = 0.79
 [metadata]
 currency = "USD"
 pricing_unit = "per_million_tokens"
-last_updated = "2025-11-24"
+last_updated = "2025-12-04"
 ```
 
 ---

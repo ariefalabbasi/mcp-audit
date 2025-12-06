@@ -57,3 +57,4 @@ mcp-efficiency-report.csv
 # Coverage reports
 htmlcov/
 .coverage
+tests/artifacts/

@@ -25,10 +25,12 @@ class TestPricingConfigLoading:
         config = PricingConfig(config_path)
         assert config.loaded == True
 
-    def test_missing_config_file(self) -> None:
-        """Test handling of missing config file"""
+    def test_missing_config_falls_back_to_defaults(self) -> None:
+        """Test that missing config file falls back to DEFAULT_PRICING (task-67)"""
         config = PricingConfig(Path("nonexistent.toml"))
-        assert config.loaded == False
+        # Should load defaults, not fail
+        assert config.loaded == True
+        assert config._source == "defaults"
 
 
 class TestModelPricingLookup:
@@ -326,6 +328,106 @@ class TestIntegration:
                             pricing[key], (int, float)
                         ), f"{vendor}.{model_name}.{key} is not numeric"
                         assert pricing[key] >= 0, f"{vendor}.{model_name}.{key} is negative"
+
+
+class TestDefaultPricingFallback:
+    """Tests for DEFAULT_PRICING fallback when no config file exists (task-67)"""
+
+    def test_source_attribute_file(self) -> None:
+        """Test _source is 'file' when loaded from config file"""
+        config = PricingConfig(Path("mcp-audit.toml"))
+        assert config._source == "file"
+        assert config.loaded == True
+
+    def test_source_attribute_defaults(self) -> None:
+        """Test _source is 'defaults' when using fallback"""
+        config = PricingConfig(Path("definitely-does-not-exist.toml"))
+        assert config._source == "defaults"
+        assert config.loaded == True
+
+    def test_default_pricing_has_claude_models(self) -> None:
+        """Test DEFAULT_PRICING includes Claude models"""
+        config = PricingConfig(Path("nonexistent.toml"))
+
+        # Check Claude Opus 4.5
+        opus_pricing = config.get_model_pricing("claude-opus-4-5-20251101")
+        assert opus_pricing is not None
+        assert "input" in opus_pricing
+        assert "output" in opus_pricing
+        assert opus_pricing["input"] > 0
+
+        # Check Claude Sonnet 4.5
+        sonnet_pricing = config.get_model_pricing("claude-sonnet-4-5-20250929")
+        assert sonnet_pricing is not None
+
+        # Check Claude Haiku 4.5
+        haiku_pricing = config.get_model_pricing("claude-haiku-4-5-20251001")
+        assert haiku_pricing is not None
+
+    def test_default_pricing_has_openai_models(self) -> None:
+        """Test DEFAULT_PRICING includes OpenAI/Codex models"""
+        config = PricingConfig(Path("nonexistent.toml"))
+
+        # Check GPT-5.1 Codex Max
+        codex_max = config.get_model_pricing("gpt-5.1-codex-max")
+        assert codex_max is not None
+        assert "input" in codex_max
+        assert "output" in codex_max
+
+        # Check GPT-5.1
+        gpt51 = config.get_model_pricing("gpt-5.1")
+        assert gpt51 is not None
+
+    def test_default_pricing_has_gemini_models(self) -> None:
+        """Test DEFAULT_PRICING includes Gemini models"""
+        config = PricingConfig(Path("nonexistent.toml"))
+
+        # Check Gemini 2.5 Flash
+        flash = config.get_model_pricing("gemini-2.5-flash")
+        assert flash is not None
+        assert "input" in flash
+        assert "output" in flash
+
+        # Check Gemini 2.5 Pro
+        pro = config.get_model_pricing("gemini-2.5-pro")
+        assert pro is not None
+
+    def test_default_pricing_cost_calculation(self) -> None:
+        """Test cost calculation works with DEFAULT_PRICING"""
+        config = PricingConfig(Path("nonexistent.toml"))
+
+        # Calculate cost with Claude Sonnet 4.5
+        cost = config.calculate_cost(
+            "claude-sonnet-4-5-20250929",
+            input_tokens=1_000_000,
+            output_tokens=1_000_000,
+        )
+
+        # 1M input @ $3.0 + 1M output @ $15.0 = $18.0
+        assert cost == pytest.approx(18.0, rel=1e-4)
+
+    def test_default_pricing_has_metadata(self) -> None:
+        """Test DEFAULT_PRICING includes proper metadata"""
+        config = PricingConfig(Path("nonexistent.toml"))
+
+        assert config.metadata is not None
+        assert config.metadata.get("currency") == "USD"
+        assert config.metadata.get("source") == "hardcoded defaults (task-67)"
+
+    def test_default_pricing_validation_passes(self) -> None:
+        """Test DEFAULT_PRICING passes validation"""
+        config = PricingConfig(Path("nonexistent.toml"))
+        result = config.validate()
+
+        assert result["valid"] == True
+        assert len(result["errors"]) == 0
+
+    def test_unknown_model_warning_mentions_config_creation(self) -> None:
+        """Test unknown model warning suggests creating config file"""
+        config = PricingConfig(Path("nonexistent.toml"))
+
+        with pytest.warns(RuntimeWarning, match="Create.*mcp-audit.toml"):
+            config.get_model_pricing("unknown-future-model")
 
 
 if __name__ == "__main__":

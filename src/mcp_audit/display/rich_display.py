@@ -106,7 +106,12 @@ class RichDisplay(DisplayAdapter):
         version_str = f" v{snapshot.version}" if snapshot.version else ""
 
         header_text = Text()
-        header_text.append(f"MCP Audit{version_str} - Live Session", style="bold cyan")
+        header_text.append(f"MCP Audit{version_str} - ", style="bold cyan")
+        # Show session type based on tracking mode
+        if snapshot.tracking_mode == "full":
+            header_text.append("Full Session ↺", style="bold yellow")
+        else:
+            header_text.append("Live Session", style="bold cyan")
         header_text.append(f"  [{snapshot.platform}]", style="bold cyan")
 
         # Project and started time (task-46.2)
@@ -170,6 +175,18 @@ class RichDisplay(DisplayAdapter):
             f"${snapshot.cost_no_cache:.4f}" if snapshot.cost_no_cache > 0 else "$-.----",
         )
 
+        # Row 2.5 (conditional): Reasoning tokens - only shown when > 0 (v1.3.0)
+        # Auto-hides for Claude Code (always 0) and when not using thinking models
+        if snapshot.reasoning_tokens > 0:
+            table.add_row(
+                "Reasoning:",
+                f"{snapshot.reasoning_tokens:,}",
+                "",
+                "",
+                "",
+                "",
+            )
+
         # Row 3: Total | Efficiency | Savings/Net Cost (task-46.3, task-47.1, task-47.2)
         # Show positive savings with 💰, negative as "Net Cost" with 💸
         # Add hint when cache is inefficient (task-47.2)
@@ -230,6 +247,12 @@ class RichDisplay(DisplayAdapter):
             total_servers = len(snapshot.server_hierarchy)
             total_tools = sum(len(s[4]) for s in snapshot.server_hierarchy)
 
+            # Task 68.11: Detect if platform provides per-tool tokens
+            # Codex CLI and Gemini CLI don't provide per-tool token attribution
+            # Hide token columns when ALL servers have 0 tokens (platform limitation)
+            total_mcp_tokens = sum(s[2] for s in snapshot.server_hierarchy)
+            show_tokens = total_mcp_tokens > 0
+
             # Sort servers: pinned first, then by token usage (existing order)
             server_list = list(snapshot.server_hierarchy)
             if self.pinned_servers:
@@ -246,10 +269,6 @@ class RichDisplay(DisplayAdapter):
                     truncated = True
                     break
 
-                # Format server tokens
-                tokens_str = self._format_tokens(server_tokens)
-                avg_str = self._format_tokens(server_avg)
-
                 # Server line with pin indicator if pinned
                 is_pinned = server_name in self.pinned_servers
                 if is_pinned:
@@ -257,9 +276,15 @@ class RichDisplay(DisplayAdapter):
                     content.append(f"{server_name:<15}", style="yellow bold")
                 else:
                     content.append(f"  {server_name:<18}", style="cyan bold")
-                content.append(f" {server_calls:>3} calls  ", style="dim")
-                content.append(f"{tokens_str:>8}", style="white")
-                content.append(f"  (avg {avg_str}/call)\n", style="dim")
+                content.append(f" {server_calls:>3} calls", style="dim")
+
+                # Task 68.11: Only show token columns when platform provides them
+                if show_tokens:
+                    tokens_str = self._format_tokens(server_tokens)
+                    avg_str = self._format_tokens(server_avg)
+                    content.append(f"  {tokens_str:>8}", style="white")
+                    content.append(f"  (avg {avg_str}/call)", style="dim")
+                content.append("\n")
                 lines_used += 1
                 servers_shown += 1
 
@@ -269,11 +294,15 @@ class RichDisplay(DisplayAdapter):
                         truncated = True
                         break
 
-                    tool_tokens_str = self._format_tokens(tool_tokens)
                     content.append(f"    └─ {tool_short:<15}", style="dim")
-                    content.append(f" {tool_calls:>3} calls  ", style="dim")
-                    content.append(f"{tool_tokens_str:>8}", style="dim")
-                    content.append(f"  ({pct_of_server:.0f}% of server)\n", style="dim")
+                    content.append(f" {tool_calls:>3} calls", style="dim")
+
+                    # Task 68.11: Only show token columns when platform provides them
+                    if show_tokens:
+                        tool_tokens_str = self._format_tokens(tool_tokens)
+                        content.append(f"  {tool_tokens_str:>8}", style="dim")
+                        content.append(f"  ({pct_of_server:.0f}% of server)", style="dim")
+                    content.append("\n")
                     lines_used += 1
                     tools_shown += 1
 
@@ -298,7 +327,7 @@ class RichDisplay(DisplayAdapter):
             total_mcp_calls = snapshot.total_tool_calls
             content.append("  ─" * 30 + "\n", style="dim")
             content.append(f"  Total MCP: {total_mcp_calls} calls", style="white")
-            if snapshot.mcp_tokens_percent > 0:
+            if show_tokens and snapshot.mcp_tokens_percent > 0:
                 content.append(
                     f"  ({snapshot.mcp_tokens_percent:.0f}% of session tokens)", style="dim"
                 )
@@ -349,11 +378,17 @@ class RichDisplay(DisplayAdapter):
         else:
             content = Text()
             for timestamp, tool_name, tokens in self.recent_events:
-                time_str = timestamp.strftime("%H:%M:%S")
+                # Convert UTC timestamp to local time for display (task-68.10)
+                local_time = timestamp.astimezone()
+                time_str = local_time.strftime("%H:%M:%S")
                 short_name = tool_name if len(tool_name) <= 40 else tool_name[:37] + "..."
                 content.append(f"[{time_str}] ", style="dim")
                 content.append(f"{short_name}", style="cyan")
-                content.append(f" ({tokens:,} tokens)\n", style="dim")
+                # Only show tokens if available (task-68.8)
+                # Codex CLI doesn't provide per-tool tokens, so hide when 0
+                if tokens > 0:
+                    content.append(f" ({tokens:,} tokens)", style="dim")
+                content.append("\n")
 
         return Panel(content, title="Recent Activity", border_style="blue")
 
@@ -396,7 +431,7 @@ class RichDisplay(DisplayAdapter):
                 return f"{minutes}m"
 
     def _print_final_summary(self, snapshot: DisplaySnapshot) -> None:
-        """Print final summary after stopping with enhanced cost display."""
+        """Print final summary after stopping with enhanced display (task-66.10)."""
         version_str = f" v{snapshot.version}" if snapshot.version else ""
 
         # Build summary text
@@ -408,32 +443,75 @@ class RichDisplay(DisplayAdapter):
         if snapshot.model_name and snapshot.model_name != "Unknown Model":
             summary_parts.append(f"Model: {snapshot.model_name}\n")
 
-        # Duration (task-46.7)
+        # Duration and rate stats (task-66.10)
         duration_human = self._format_duration_human(snapshot.duration_seconds)
-        summary_parts.append(f"Duration: {duration_human}\n")
+        summary_parts.append(f"Duration: {duration_human}")
 
-        # Messages (task-46.1)
-        summary_parts.append(f"Messages: {snapshot.message_count}\n")
+        # Rate statistics (task-66.10)
+        if snapshot.duration_seconds > 0:
+            msg_per_min = snapshot.message_count / (snapshot.duration_seconds / 60)
+            tokens_per_min = snapshot.total_tokens / (snapshot.duration_seconds / 60)
+            summary_parts.append(
+                f"  ({snapshot.message_count} msgs @ {msg_per_min:.1f}/min, "
+                f"{self._format_tokens(int(tokens_per_min))}/min)\n"
+            )
+        else:
+            summary_parts.append(f"  ({snapshot.message_count} messages)\n")
 
-        summary_parts.append(f"\nTotal tokens: {snapshot.total_tokens:,}\n")
+        # Token breakdown with percentages (task-66.10)
+        summary_parts.append(f"\n[bold]Tokens[/bold]: {snapshot.total_tokens:,}\n")
+        if snapshot.total_tokens > 0:
+            input_pct = snapshot.input_tokens / snapshot.total_tokens * 100
+            output_pct = snapshot.output_tokens / snapshot.total_tokens * 100
+            cache_read_pct = snapshot.cache_read_tokens / snapshot.total_tokens * 100
+            cache_created_pct = snapshot.cache_created_tokens / snapshot.total_tokens * 100
 
-        # Split cache (task-46.8)
-        summary_parts.append(
-            f"  Cache created: {snapshot.cache_created_tokens:,} | "
-            f"Cache read: {snapshot.cache_read_tokens:,}\n"
-        )
+            summary_parts.append(
+                f"  Input: {snapshot.input_tokens:,} ({input_pct:.1f}%) | "
+                f"Output: {snapshot.output_tokens:,} ({output_pct:.1f}%)\n"
+            )
+            # v1.3.0: Show reasoning tokens when > 0 (Gemini thoughts / Codex reasoning)
+            if snapshot.reasoning_tokens > 0:
+                reasoning_pct = snapshot.reasoning_tokens / snapshot.total_tokens * 100
+                summary_parts.append(
+                    f"  Reasoning: {snapshot.reasoning_tokens:,} ({reasoning_pct:.1f}%)\n"
+                )
+            if snapshot.cache_read_tokens > 0 or snapshot.cache_created_tokens > 0:
+                summary_parts.append(
+                    f"  Cache read: {snapshot.cache_read_tokens:,} ({cache_read_pct:.1f}%)"
+                )
+                if snapshot.cache_created_tokens > 0:
+                    summary_parts.append(
+                        f" | Cache created: {snapshot.cache_created_tokens:,} ({cache_created_pct:.1f}%)"
+                    )
+                summary_parts.append("\n")
+        summary_parts.append(f"  Cache efficiency: {snapshot.cache_efficiency:.1%}\n")
 
-        # Tool calls
-        summary_parts.append(f"MCP tool calls: {snapshot.total_tool_calls}\n")
+        # Tool breakdown (task-66.10)
+        summary_parts.append("\n[bold]Tools[/bold]:\n")
+
+        # MCP tools with server breakdown
+        if snapshot.total_tool_calls > 0:
+            num_servers = len(snapshot.server_hierarchy) if snapshot.server_hierarchy else 0
+            summary_parts.append(
+                f"  MCP: {snapshot.total_tool_calls} calls across {num_servers} servers\n"
+            )
+            # Show top servers
+            if snapshot.server_hierarchy:
+                top_servers = sorted(snapshot.server_hierarchy, key=lambda s: s[2], reverse=True)[
+                    :3
+                ]
+                server_strs = [f"{s[0]}({s[1]})" for s in top_servers]
+                summary_parts.append(f"    Top: {', '.join(server_strs)}\n")
+        else:
+            summary_parts.append("  MCP: 0 calls\n")
 
         # Built-in tools (task-46.4)
         if snapshot.builtin_tool_calls > 0:
             summary_parts.append(
-                f"Built-in tool calls: {snapshot.builtin_tool_calls} "
+                f"  Built-in: {snapshot.builtin_tool_calls} calls "
                 f"({self._format_tokens(snapshot.builtin_tool_tokens)})\n"
             )
-
-        summary_parts.append(f"Cache efficiency: {snapshot.cache_efficiency:.1%}\n")
 
         # Enhanced cost display (AC #1, #3, #4, task-47.1)
         summary_parts.append(f"\nCost w/ Cache (USD): ${snapshot.cost_estimate:.4f}\n")

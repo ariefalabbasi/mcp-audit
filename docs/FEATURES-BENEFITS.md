@@ -1,6 +1,6 @@
 # Features & Benefits by Audience
 
-MCP Audit v0.3.11 - Features mapped to benefits for each target audience.
+MCP Audit v0.3.14 - Features mapped to benefits for each target audience.
 
 ---
 
@@ -11,6 +11,7 @@ MCP Audit v0.3.11 - Features mapped to benefits for each target audience.
 | Real-time TUI | See tool efficiency live | Watch context consumption |
 | Per-tool metrics | Benchmark your implementations | Find expensive tools |
 | Per-server breakdown | Isolate server-level issues | Compare MCP server costs |
+| Built-in tool tracking | Monitor CLI-native tools | See total tool usage |
 | Cache analysis | Optimize cache behavior | Understand cache efficiency |
 | Duplicate detection | Find redundant API calls | Spot wasted tokens |
 | Cross-session reports | Track optimization progress | Long-term cost trends |
@@ -220,6 +221,7 @@ mcp-audit report ~/.mcp-audit/sessions/
 | Context limit visibility | Know when you're approaching limits |
 | Model detection | See which Claude model is being used |
 | Session file monitoring | Zero-config automatic tracking |
+| Built-in tool summary | Track Bash, Read, Edit, Glob usage in session files |
 
 **Pain Point Addressed**: "Why did I hit the context limit?"
 
@@ -231,19 +233,26 @@ mcp-audit report ~/.mcp-audit/sessions/
 | OpenAI model pricing | Accurate cost estimates |
 | Cross-platform normalization | Same analysis format as Claude Code |
 | Real-time monitoring | Watch costs accumulate |
+| Reasoning token tracking | See thinking tokens for o-series models (v1.3.0) |
+| Built-in tool call counts | Track shell, read_file, apply_patch, etc. |
 
 **Pain Point Addressed**: "What am I actually spending on Codex?"
+
+**Note**: Codex CLI provides turn-level tokens only. Built-in tool call counts are tracked but per-tool token attribution is not available from the platform. Reasoning tokens (from o1, o3 models) are tracked separately from output tokens.
 
 ### Gemini CLI Users
 
 | Feature | Benefit |
 |---------|---------|
 | Native session parsing | No OTEL setup required |
-| Thinking token tracking | See reasoning costs separately |
+| Reasoning token tracking | See thinking/reasoning costs separately (v1.3.0) |
 | Google model pricing | Accurate cost estimates |
-| Tool call detection | Track MCP server usage |
+| Tool call detection | Track MCP and built-in tool usage |
+| Built-in tool call counts | Track read_file, list_directory, etc. |
 
 **Pain Point Addressed**: "How does Gemini CLI compare to alternatives?"
+
+**Note**: Gemini CLI provides message-level tokens only. Built-in tool call counts are tracked but per-tool token attribution is not available from the platform. Reasoning tokens (Gemini's `thoughts` field) are tracked separately from output tokens.
 
 ---
 
@@ -320,4 +329,4 @@ mcp-audit report ~/.mcp-audit/sessions/
 
 ---
 
-*v0.3.11 | Schema v1.1.0 | MIT License*
+*v0.3.14 | Schema v1.3.0 | MIT License*

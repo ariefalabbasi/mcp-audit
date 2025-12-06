@@ -616,7 +616,10 @@ class TestEndToEndWorkflow:
 
     def test_cross_session_analysis(self, tmp_path, sample_claude_code_events) -> None:
         """Test analyzing multiple sessions"""
-        manager = SessionManager(base_dir=tmp_path)
+        # SessionManager expects sessions in date subdirs directly.
+        # ClaudeCodeAdapter.save_session() creates platform/date structure,
+        # so point SessionManager at the platform directory.
+        manager = SessionManager(base_dir=tmp_path / "claude-code")
 
         # Create 3 sessions
         for i in range(3):

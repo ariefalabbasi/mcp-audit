@@ -27,7 +27,7 @@ pip install mcp-audit
 Open a new terminal and run:
 
 ```bash
-mcp-audit collect --platform claude_code
+mcp-audit collect --platform claude-code
 ```
 
 You'll see a live display of your session:
@@ -123,10 +123,10 @@ Override auto-detection with CLI flags:
 
 ```bash
 # Specify project name
-mcp-audit collect --platform claude_code --project "my-feature"
+mcp-audit collect --platform claude-code --project "my-feature"
 
 # Custom output directory
-mcp-audit collect --platform claude_code --output ./my-sessions/
+mcp-audit collect --platform claude-code --output ./my-sessions/
 ```
 
 ### Pricing Configuration

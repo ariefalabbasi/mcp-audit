@@ -57,7 +57,7 @@ cd /path/to/project
 gemini
 
 # In another terminal, from the same directory
-mcp-audit collect --platform gemini_cli
+mcp-audit collect --platform gemini-cli
 
 # Or use Python API
 from mcp_audit.gemini_cli_adapter import GeminiCLIAdapter
@@ -72,10 +72,10 @@ Analyze completed sessions:
 ```bash
 # Process the most recent session (auto-detects project hash)
 cd /path/to/project
-mcp-audit collect --platform gemini_cli --batch --latest
+mcp-audit collect --platform gemini-cli --batch --latest
 
 # Process a specific session file
-mcp-audit collect --platform gemini_cli --batch \
+mcp-audit collect --platform gemini-cli --batch \
   --session-file ~/.gemini/tmp/abc123.../chats/session-2025-11-07T05-10-xyz.json
 ```
 
@@ -114,7 +114,7 @@ print(f"Project hash: {project_hash}")
 If auto-detection fails, specify the hash directly:
 
 ```bash
-mcp-audit collect --platform gemini_cli --project-hash abc123...
+mcp-audit collect --platform gemini-cli --project-hash abc123...
 ```
 
 ## What Gets Tracked
@@ -157,7 +157,7 @@ print(f"Thinking tokens: {adapter.thoughts_tokens}")
 ## Example Output
 
 ```
-$ mcp-audit collect --platform gemini_cli --batch --latest
+$ mcp-audit collect --platform gemini-cli --batch --latest
 
 [Gemini CLI] Processing: session-2025-11-07T05-10-0b04c358.json
   Total tokens: 13,175,835
@@ -220,7 +220,7 @@ Previous versions of MCP Audit used Gemini's OpenTelemetry output. The new adapt
 Ensure you're in the correct directory when running MCP Audit, or specify the hash:
 
 ```bash
-mcp-audit collect --platform gemini_cli --project-hash <correct-hash>
+mcp-audit collect --platform gemini-cli --project-hash <correct-hash>
 ```
 
 ### Model Not Detected

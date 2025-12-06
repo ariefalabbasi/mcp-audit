@@ -43,6 +43,29 @@ MODEL_PRIORITY: Dict[str, int] = {
     "haiku": 1,  # Lightweight
 }
 
+# Claude Code built-in tools - from official docs:
+# https://docs.anthropic.com/en/docs/claude-code/settings#tools-available-to-claude
+CLAUDE_CODE_BUILTIN_TOOLS: Set[str] = {
+    "AskUserQuestion",  # User interaction/clarification
+    "Bash",  # Shell command execution
+    "BashOutput",  # Background shell output retrieval
+    "Edit",  # Targeted file edits
+    "EnterPlanMode",  # Enter plan mode (not in docs, but exists)
+    "ExitPlanMode",  # Exit plan mode
+    "Glob",  # File pattern matching
+    "Grep",  # Content search
+    "KillShell",  # Kill background shell
+    "NotebookEdit",  # Jupyter notebook editing
+    "Read",  # File reading
+    "Skill",  # Execute skills
+    "SlashCommand",  # Custom slash commands
+    "Task",  # Sub-agent tasks
+    "TodoWrite",  # Task list management
+    "WebFetch",  # URL content fetching
+    "WebSearch",  # Web searching
+    "Write",  # File creation/overwrite
+}
+
 # Default exchange rate (used if not in config)
 DEFAULT_USD_TO_AUD = 1.54
 
@@ -157,9 +180,10 @@ class ClaudeCodeAdapter(BaseTracker):
         # Message counter (task-46.1)
         self._message_count: int = 0
 
-        # Built-in tools tracking (task-46.4)
+        # Built-in tools tracking (task-46.4, task-78)
         self._builtin_tool_calls: int = 0
         self._builtin_tool_tokens: int = 0
+        self._builtin_tool_stats: Dict[str, Dict[str, int]] = {}  # tool -> {calls, tokens}
 
         # Git metadata (task-46.5)
         self._git_metadata = _get_git_metadata(Path.cwd())
@@ -384,7 +408,7 @@ class ClaudeCodeAdapter(BaseTracker):
                                 tool_params = content_block.get("input", {})
                                 break  # Use first MCP tool found
                             else:
-                                # Built-in tool (Read, Write, Bash, etc.)
+                                # Built-in tool (see CLAUDE_CODE_BUILTIN_TOOLS)
                                 builtin_tool_name = tool_name
                                 tool_params = content_block.get("input", {})
                                 # Don't break - MCP tool takes priority
@@ -691,6 +715,7 @@ class ClaudeCodeAdapter(BaseTracker):
             message_count=self._message_count,
             cache_created_tokens=cache_created,
             cache_read_tokens=cache_read,
+            reasoning_tokens=0,  # v1.3.0: Claude Code doesn't expose reasoning tokens
             builtin_tool_calls=self._builtin_tool_calls,
             builtin_tool_tokens=self._builtin_tool_tokens,
             git_branch=self._git_metadata.get("branch", ""),
@@ -749,11 +774,20 @@ class ClaudeCodeAdapter(BaseTracker):
                 self._display.on_event("(session)", total_tokens, datetime.now())
             return
 
-        # Handle built-in tool calls (task-46.4)
+        # Handle built-in tool calls (task-46.4, task-78)
         if tool_name.startswith("__builtin__:"):
             actual_tool_name = tool_name.replace("__builtin__:", "")
             self._builtin_tool_calls += 1
             self._builtin_tool_tokens += total_tokens
+
+            # Track per-tool stats (task-78: for session file output)
+            if actual_tool_name not in self._builtin_tool_stats:
+                self._builtin_tool_stats[actual_tool_name] = {"calls": 0, "tokens": 0}
+            self._builtin_tool_stats[actual_tool_name]["calls"] += 1
+            self._builtin_tool_stats[actual_tool_name]["tokens"] += total_tokens
+
+            # Update session's builtin_tool_stats for persistence (task-78)
+            self.session.builtin_tool_stats = self._builtin_tool_stats
 
             # Update session token usage (built-in tools contribute to total)
             self.session.token_usage.input_tokens += usage["input_tokens"]
@@ -842,7 +876,7 @@ def main() -> int:
         output_dir = Path(args.output)
         adapter.save_session(output_dir)
 
-        print(f"\nSession saved to: {adapter.session_dir}")
+        print(f"\nSession saved to: {adapter.session_path}")
         print(f"Total tokens: {session.token_usage.total_tokens:,}")
         print(f"MCP calls: {session.mcp_tool_calls.total_calls}")
         print(f"Cache efficiency: {session.token_usage.cache_efficiency:.1%}")

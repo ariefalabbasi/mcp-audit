@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 from . import __version__
 
 # Schema version (see docs/data-contract.md for compatibility guarantees)
-SCHEMA_VERSION = "1.1.0"
+SCHEMA_VERSION = "1.3.0"
 
 
 def _now_with_timezone() -> datetime:
@@ -171,12 +171,24 @@ class ServerSession:
 
 @dataclass
 class TokenUsage:
-    """Token usage statistics"""
+    """Token usage statistics
+
+    Attributes:
+        input_tokens: Tokens from user input/context
+        output_tokens: Tokens from model output (excludes reasoning)
+        cache_created_tokens: Tokens added to cache
+        cache_read_tokens: Tokens read from cache
+        reasoning_tokens: Thinking/reasoning tokens (Gemini CLI: thoughts,
+            Codex CLI: reasoning_output_tokens, Claude Code: 0)
+        total_tokens: Sum of all token types
+        cache_efficiency: Ratio of cache_read to total input (0.0-1.0)
+    """
 
     input_tokens: int = 0
     output_tokens: int = 0
     cache_created_tokens: int = 0
     cache_read_tokens: int = 0
+    reasoning_tokens: int = 0  # v1.3.0: Gemini thoughts / Codex reasoning
     total_tokens: int = 0
     cache_efficiency: float = 0.0
 
@@ -204,6 +216,27 @@ class MCPSummary:
     def to_dict(self) -> Dict[str, Any]:
         """Convert to JSON-serializable dict"""
         return asdict(self)
+
+
+@dataclass
+class BuiltinToolSummary:
+    """Summary of built-in tool usage for session logs (v1.2.0)
+
+    Tracks aggregate and per-tool statistics for built-in tools
+    (Bash, Read, Write, Edit, Glob, Grep, etc.)
+    """
+
+    total_calls: int = 0
+    total_tokens: int = 0
+    tools: List[Dict[str, Any]] = field(default_factory=list)  # Per-tool breakdown
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to JSON-serializable dict"""
+        return {
+            "total_calls": self.total_calls,
+            "total_tokens": self.total_tokens,
+            "tools": self.tools,
+        }
 
 
 @dataclass
@@ -255,10 +288,14 @@ class Session:
     duration_seconds: Optional[float] = None
     source_files: List[str] = field(default_factory=list)  # Files monitored (v1.1.0)
     message_count: int = 0  # Number of assistant messages (task-49.1)
+    # Built-in tool tracking (v1.2.0)
+    builtin_tool_stats: Dict[str, Dict[str, int]] = field(
+        default_factory=dict
+    )  # tool -> {calls, tokens}
     _call_index: int = field(default=0, repr=False)  # Internal counter for call indices
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to v1.1.0 JSON-serializable dict with flat tool_calls"""
+        """Convert to v1.2.0 JSON-serializable dict with flat tool_calls and builtin_tool_summary"""
         # Build flat tool_calls array from all server sessions
         tool_calls = []
         for server_session in self.server_sessions.values():
@@ -274,6 +311,9 @@ class Session:
 
         # Build cache analysis (task-47.3)
         cache_analysis = self._build_cache_analysis(self.cache_savings_usd)
+
+        # Build builtin tool summary (v1.2.0 - task-78)
+        builtin_tool_summary = self._build_builtin_tool_summary()
 
         return {
             "_file": None,  # To be set by save_session()
@@ -294,6 +334,7 @@ class Session:
             "cost_no_cache_usd": self.cost_no_cache,
             "cache_savings_usd": self.cache_savings_usd,
             "mcp_summary": mcp_summary.to_dict(),
+            "builtin_tool_summary": builtin_tool_summary.to_dict(),
             "cache_analysis": cache_analysis.to_dict(),
             "tool_calls": tool_calls,
             "analysis": {
@@ -469,6 +510,48 @@ class Session:
             recommendation=recommendation,
         )
 
+    def _build_builtin_tool_summary(self) -> BuiltinToolSummary:
+        """Build summary of built-in tool usage (v1.2.0 - task-78).
+
+        Converts internal builtin_tool_stats dict to a structured summary
+        for inclusion in session output.
+
+        Returns:
+            BuiltinToolSummary with total counts and per-tool breakdown
+        """
+        if not self.builtin_tool_stats:
+            return BuiltinToolSummary()
+
+        total_calls = 0
+        total_tokens = 0
+        tools_list: List[Dict[str, Any]] = []
+
+        # Sort by tokens (descending) for consistent output
+        sorted_tools = sorted(
+            self.builtin_tool_stats.items(),
+            key=lambda x: x[1].get("tokens", 0),
+            reverse=True,
+        )
+
+        for tool_name, stats in sorted_tools:
+            calls = stats.get("calls", 0)
+            tokens = stats.get("tokens", 0)
+            total_calls += calls
+            total_tokens += tokens
+            tools_list.append(
+                {
+                    "tool": tool_name,
+                    "calls": calls,
+                    "tokens": tokens,
+                }
+            )
+
+        return BuiltinToolSummary(
+            total_calls=total_calls,
+            total_tokens=total_tokens,
+            tools=tools_list,
+        )
+
     def next_call_index(self) -> int:
         """Get next sequential call index"""
         self._call_index += 1
@@ -518,8 +601,9 @@ class BaseTracker(ABC):
         # Duplicate detection (key: content_hash)
         self.content_hashes: Dict[str, List[Call]] = defaultdict(list)
 
-        # Session directory
+        # Session directory and file path
         self.session_dir: Optional[Path] = None
+        self.session_path: Optional[Path] = None  # Full path to saved session file
 
         # Output directory (default: ~/.mcp-audit/sessions)
         self.output_dir: Path = Path.home() / ".mcp-audit" / "sessions"
@@ -586,13 +670,18 @@ class BaseTracker(ABC):
             "mcp__zen__chat" → "zen"
             "mcp__zen-mcp__chat" → "zen" (Codex CLI format)
             "mcp__brave-search__web" → "brave-search"
+            "builtin__read_file" → "builtin" (task-78)
 
         Args:
-            tool_name: Full MCP tool name
+            tool_name: Full MCP tool name or built-in tool name
 
         Returns:
             Normalized server name
         """
+        # Handle built-in tools (task-78)
+        if tool_name.startswith("builtin__"):
+            return "builtin"
+
         if not tool_name.startswith("mcp__"):
             warnings.warn(f"Tool name doesn't start with 'mcp__': {tool_name}", stacklevel=2)
             return "unknown"
@@ -889,9 +978,11 @@ class BaseTracker(ABC):
         Args:
             output_dir: Base directory for sessions (default: ~/.mcp-audit/sessions)
         """
-        # Create date subdirectory (YYYY-MM-DD)
+        # Create platform/date subdirectory structure
+        # e.g., ~/.mcp-audit/sessions/codex-cli/2025-12-04/
         date_str = self.timestamp.strftime("%Y-%m-%d")
-        date_dir = output_dir / date_str
+        platform_dir = output_dir / self.platform
+        date_dir = platform_dir / date_str
         date_dir.mkdir(parents=True, exist_ok=True)
 
         # Generate file name: <project>-<timestamp>.json
@@ -902,6 +993,7 @@ class BaseTracker(ABC):
 
         # Store session_dir for reference (point to date dir, file is single file)
         self.session_dir = date_dir
+        self.session_path = session_path  # Full path to session file
 
         # Build the _file header
         file_header = FileHeader(

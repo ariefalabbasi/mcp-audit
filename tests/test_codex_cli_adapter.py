@@ -59,8 +59,27 @@ def make_token_count_event(
     cached_input_tokens: int = 1500,
     output_tokens: int = 150,
     reasoning_tokens: int = 50,
+    cumulative_input: int | None = None,
+    cumulative_cached: int | None = None,
+    cumulative_output: int | None = None,
+    cumulative_reasoning: int | None = None,
 ) -> Dict[str, Any]:
-    """Create a token_count event."""
+    """Create a token_count event.
+
+    Args:
+        input_tokens: Input tokens for last_token_usage (incremental)
+        cached_input_tokens: Cached input tokens for last_token_usage
+        output_tokens: Output tokens for last_token_usage
+        reasoning_tokens: Reasoning tokens for last_token_usage
+        cumulative_*: If provided, sets total_token_usage (cumulative) values.
+                      If not provided, cumulative values equal the incremental values.
+    """
+    # Default cumulative to same as incremental if not specified
+    cum_input = cumulative_input if cumulative_input is not None else input_tokens
+    cum_cached = cumulative_cached if cumulative_cached is not None else cached_input_tokens
+    cum_output = cumulative_output if cumulative_output is not None else output_tokens
+    cum_reasoning = cumulative_reasoning if cumulative_reasoning is not None else reasoning_tokens
+
     return {
         "timestamp": "2025-11-04T11:38:30.056Z",
         "type": "event_msg",
@@ -76,6 +95,13 @@ def make_token_count_event(
                     + cached_input_tokens
                     + output_tokens
                     + reasoning_tokens,
+                },
+                "total_token_usage": {
+                    "input_tokens": cum_input,
+                    "cached_input_tokens": cum_cached,
+                    "output_tokens": cum_output,
+                    "reasoning_output_tokens": cum_reasoning,
+                    "total_tokens": cum_input + cum_cached + cum_output + cum_reasoning,
                 },
             },
         },
@@ -113,6 +139,27 @@ def make_native_tool_call_event(
             "name": tool_name,
             "arguments": json.dumps(arguments or {"path": "/test/file.py"}),
             "call_id": "call_native123",
+        },
+    }
+
+
+def make_function_call_output_event(
+    call_id: str = "call_abc123",
+    output: Any = "Exit code: 0\nWall time: 1.5 seconds\nOutput:\nResult here",
+) -> Dict[str, Any]:
+    """Create a function_call_output event with wall time (task-68.5).
+
+    Args:
+        call_id: The call ID to match with function_call event
+        output: Can be str or list (Codex CLI sometimes returns list)
+    """
+    return {
+        "timestamp": "2025-11-04T11:38:35.000Z",
+        "type": "response_item",
+        "payload": {
+            "type": "function_call_output",
+            "call_id": call_id,
+            "output": output,
         },
     }
 
@@ -287,7 +334,8 @@ class TestEventParsing:
         tool_name, usage = result
         assert tool_name == "__session__"
         assert usage["input_tokens"] == 300
-        assert usage["output_tokens"] == 200  # 150 + 50 reasoning
+        assert usage["output_tokens"] == 150  # v1.3.0: No longer includes reasoning
+        assert usage["reasoning_tokens"] == 50  # v1.3.0: Tracked separately
         assert usage["cache_read_tokens"] == 1500
         assert usage["cache_created_tokens"] == 0
 
@@ -306,12 +354,151 @@ class TestEventParsing:
         assert usage["tool_params"] == {"prompt": "test query"}
         assert usage["call_id"] == "call_abc123"
 
-    def test_parse_native_tool_ignored(self, adapter: CodexCLIAdapter) -> None:
-        """Test native tools are ignored."""
-        event = make_native_tool_call_event()
+    def test_parse_native_tool_tracked_internally(self, adapter: CodexCLIAdapter) -> None:
+        """Test native/built-in tools are tracked internally but not returned (task-68.3)."""
+        event = make_native_tool_call_event(tool_name="shell_command")
 
+        # Built-in tools return None (not tracked as MCP tools)
         result = adapter.parse_event(event)
         assert result is None
+
+        # But they ARE tracked internally
+        assert adapter._builtin_tool_total_calls == 1
+        assert "shell_command" in adapter._builtin_tool_counts
+        assert adapter._builtin_tool_counts["shell_command"] == 1
+
+    def test_parse_multiple_builtin_tools(self, adapter: CodexCLIAdapter) -> None:
+        """Test multiple built-in tool calls are counted correctly (task-68.3)."""
+        # Parse multiple built-in tool events
+        for _ in range(3):
+            adapter.parse_event(make_native_tool_call_event(tool_name="shell_command"))
+        for _ in range(2):
+            adapter.parse_event(make_native_tool_call_event(tool_name="update_plan"))
+
+        # Verify counts
+        assert adapter._builtin_tool_total_calls == 5
+        assert adapter._builtin_tool_counts["shell_command"] == 3
+        assert adapter._builtin_tool_counts["update_plan"] == 2
+
+    def test_parse_function_call_output_extracts_duration(self, adapter: CodexCLIAdapter) -> None:
+        """Test function_call_output extracts wall time duration (task-68.5)."""
+        # First parse the MCP tool call
+        tool_event = make_mcp_tool_call_event(
+            tool_name="mcp__zen__chat",
+            call_id="call_duration_test",
+        )
+        result = adapter.parse_event(tool_event)
+        assert result is not None
+        tool_name, usage = result
+
+        # Process the tool call to record it
+        adapter._process_tool_call(tool_name, usage)
+
+        # Now parse the output event with wall time
+        output_event = make_function_call_output_event(
+            call_id="call_duration_test",
+            output="Exit code: 0\nWall time: 2.5 seconds\nOutput:\nSuccess",
+        )
+        output_result = adapter.parse_event(output_event)
+        # Output event returns None (updates happen internally)
+        assert output_result is None
+
+        # Verify duration was updated on the recorded call
+        server_session = adapter.server_sessions.get("zen")
+        assert server_session is not None
+        tool_stats = server_session.tools.get("mcp__zen__chat")
+        assert tool_stats is not None
+        assert len(tool_stats.call_history) == 1
+        assert tool_stats.call_history[0].duration_ms == 2500  # 2.5 seconds = 2500ms
+        assert tool_stats.total_duration_ms == 2500
+        assert tool_stats.max_duration_ms == 2500
+        assert tool_stats.min_duration_ms == 2500
+
+    def test_parse_function_call_output_without_wall_time(self, adapter: CodexCLIAdapter) -> None:
+        """Test function_call_output without wall time leaves duration at 0 (task-68.5)."""
+        # First parse the MCP tool call
+        tool_event = make_mcp_tool_call_event(
+            tool_name="mcp__zen__chat",
+            call_id="call_no_duration",
+        )
+        result = adapter.parse_event(tool_event)
+        assert result is not None
+        tool_name, usage = result
+
+        # Process the tool call to record it
+        adapter._process_tool_call(tool_name, usage)
+
+        # Now parse output event WITHOUT wall time
+        output_event = make_function_call_output_event(
+            call_id="call_no_duration",
+            output="Exit code: 0\nOutput:\nSuccess",  # No wall time
+        )
+        adapter.parse_event(output_event)
+
+        # Verify duration remains at 0
+        server_session = adapter.server_sessions.get("zen")
+        assert server_session is not None
+        tool_stats = server_session.tools.get("mcp__zen__chat")
+        assert tool_stats is not None
+        assert tool_stats.call_history[0].duration_ms == 0
+        assert tool_stats.total_duration_ms is None  # Not set when duration is 0
+
+    def test_function_call_output_list_type(self, adapter: CodexCLIAdapter) -> None:
+        """Test function_call_output with list output doesn't crash (bug fix).
+
+        Some Codex CLI events have output as a list instead of string.
+        This was causing: TypeError: expected string or bytes-like object, got 'list'
+        """
+        # First parse the MCP tool call
+        call_event = make_mcp_tool_call_event(
+            tool_name="mcp__zen__chat",
+            call_id="call_list_output",
+        )
+        result = adapter.parse_event(call_event)
+        assert result is not None
+        tool_name, usage = result
+
+        # Process the tool call to record it
+        adapter._process_tool_call(tool_name, usage)
+
+        # Send output as a list (like some Codex CLI events)
+        output_event = make_function_call_output_event(
+            call_id="call_list_output",
+            output=["Line 1", "Wall time: 3.0 seconds", "Line 3"],  # List output
+        )
+        # Should not crash
+        output_result = adapter.parse_event(output_event)
+        assert output_result is None  # Output events return None
+
+        # Verify duration was extracted from the joined list
+        server_session = adapter.server_sessions.get("zen")
+        assert server_session is not None
+        tool_stats = server_session.tools.get("mcp__zen__chat")
+        assert tool_stats is not None
+        assert tool_stats.call_history[0].duration_ms == 3000
+
+    def test_function_call_output_non_string_type(self, adapter: CodexCLIAdapter) -> None:
+        """Test function_call_output with non-string/non-list output doesn't crash."""
+        # First parse the MCP tool call
+        call_event = make_mcp_tool_call_event(
+            tool_name="mcp__zen__chat",
+            call_id="call_dict_output",
+        )
+        result = adapter.parse_event(call_event)
+        assert result is not None
+        tool_name, usage = result
+
+        # Process the tool call to record it
+        adapter._process_tool_call(tool_name, usage)
+
+        # Send output as a dict (edge case)
+        output_event = make_function_call_output_event(
+            call_id="call_dict_output",
+            output={"result": "success"},  # Dict output
+        )
+        # Should not crash
+        output_result = adapter.parse_event(output_event)
+        assert output_result is None
 
     def test_parse_invalid_json(self, adapter: CodexCLIAdapter) -> None:
         """Test invalid JSON returns None."""
@@ -418,7 +605,8 @@ class TestBatchProcessing:
         # Verify tokens processed
         assert session.token_usage.total_tokens > 0
         assert session.token_usage.input_tokens == 300
-        assert session.token_usage.output_tokens == 200  # 150 + 50 reasoning
+        assert session.token_usage.output_tokens == 150  # v1.3.0: No longer includes reasoning
+        assert session.token_usage.reasoning_tokens == 50  # v1.3.0: Tracked separately
 
     def test_batch_processing_model_detection(
         self, adapter: CodexCLIAdapter, sample_session_file: Path
@@ -542,7 +730,8 @@ class TestCompleteWorkflow:
 
         # Verify tokens
         assert session.token_usage.input_tokens == 300
-        assert session.token_usage.output_tokens == 200
+        assert session.token_usage.output_tokens == 150  # v1.3.0: NOT combined with reasoning
+        assert session.token_usage.reasoning_tokens == 50  # v1.3.0: Tracked separately
         assert session.token_usage.cache_read_tokens == 1500
 
         # Verify MCP calls
@@ -551,6 +740,192 @@ class TestCompleteWorkflow:
 
         # Verify files saved
         assert adapter.session_dir is not None
+
+
+# ============================================================================
+# Task 79: Token Double-Counting Bug Fix Tests
+# ============================================================================
+
+
+class TestTokenDuplicateEventHandling:
+    """Tests for Task 79: Fix token double-counting from duplicate events.
+
+    Codex CLI native logs contain duplicate token_count events (same values
+    appear twice consecutively). The adapter should use cumulative total_token_usage
+    values and REPLACE session totals to avoid double-counting.
+    """
+
+    def test_duplicate_events_not_double_counted(self, adapter: CodexCLIAdapter) -> None:
+        """Test duplicate token_count events don't inflate totals (Task 79 core fix)."""
+        # Simulate Codex CLI duplicate event pattern:
+        # Event 1: cumulative totals = 5149
+        # Event 2: DUPLICATE - same cumulative totals = 5149
+        # Event 3: cumulative totals = 10742
+        # Event 4: DUPLICATE - same cumulative totals = 10742
+
+        # Event 1
+        event1 = make_token_count_event(
+            input_tokens=4000,  # incremental (ignored by fix)
+            cached_input_tokens=1000,
+            output_tokens=100,
+            reasoning_tokens=49,
+            cumulative_input=4000,  # cumulative (used by fix)
+            cumulative_cached=1000,
+            cumulative_output=100,
+            cumulative_reasoning=49,
+        )
+        result = adapter.parse_event(event1)
+        assert result is not None
+        adapter._process_tool_call(*result)
+
+        # Event 2 - DUPLICATE (same cumulative values)
+        event2 = make_token_count_event(
+            input_tokens=4000,  # If we summed last_token_usage, this would double
+            cached_input_tokens=1000,
+            output_tokens=100,
+            reasoning_tokens=49,
+            cumulative_input=4000,  # Same cumulative - should not change totals
+            cumulative_cached=1000,
+            cumulative_output=100,
+            cumulative_reasoning=49,
+        )
+        result = adapter.parse_event(event2)
+        assert result is not None
+        adapter._process_tool_call(*result)
+
+        # After 2 events (with duplicate), totals should match cumulative, not 2x
+        assert adapter.session.token_usage.input_tokens == 4000  # NOT 8000
+        assert adapter.session.token_usage.cache_read_tokens == 1000  # NOT 2000
+        assert (
+            adapter.session.token_usage.output_tokens == 100
+        )  # v1.3.0: NOT combined with reasoning
+        assert adapter.session.token_usage.reasoning_tokens == 49  # v1.3.0: Tracked separately
+
+    def test_cumulative_values_replace_not_add(self, adapter: CodexCLIAdapter) -> None:
+        """Test that cumulative values REPLACE session totals, not ADD."""
+        # First event: cumulative = 5000 input
+        event1 = make_token_count_event(
+            cumulative_input=5000,
+            cumulative_cached=1000,
+            cumulative_output=200,
+            cumulative_reasoning=100,
+        )
+        result = adapter.parse_event(event1)
+        assert result is not None
+        adapter._process_tool_call(*result)
+
+        assert adapter.session.token_usage.input_tokens == 5000
+        assert (
+            adapter.session.token_usage.output_tokens == 200
+        )  # v1.3.0: NOT combined with reasoning
+        assert adapter.session.token_usage.reasoning_tokens == 100  # v1.3.0: Tracked separately
+
+        # Second event: cumulative = 10000 input (delta was 5000)
+        event2 = make_token_count_event(
+            cumulative_input=10000,
+            cumulative_cached=2000,
+            cumulative_output=400,
+            cumulative_reasoning=200,
+        )
+        result = adapter.parse_event(event2)
+        assert result is not None
+        adapter._process_tool_call(*result)
+
+        # Should be cumulative values, not sum of cumulative values
+        assert adapter.session.token_usage.input_tokens == 10000  # NOT 15000
+        assert adapter.session.token_usage.cache_read_tokens == 2000  # NOT 3000
+        assert (
+            adapter.session.token_usage.output_tokens == 400
+        )  # v1.3.0: NOT combined with reasoning
+        assert adapter.session.token_usage.reasoning_tokens == 200  # v1.3.0: Tracked separately
+
+    def test_final_cumulative_matches_native(self, adapter: CodexCLIAdapter) -> None:
+        """Test final totals match native Codex CLI values (Task 76 validation).
+
+        Based on actual Task 76 evidence:
+        Native final: input=16,422, output=533+128 reasoning, cached=10,240, total=16,955
+        (Note: mcp-audit was reporting 43,249 before fix)
+        """
+        # Simulate sequence from Task 76 evidence (simplified)
+        events = [
+            # Event 1: First turn
+            make_token_count_event(
+                cumulative_input=5000,
+                cumulative_cached=1000,
+                cumulative_output=100,
+                cumulative_reasoning=49,
+            ),
+            # Event 2: Duplicate of Event 1
+            make_token_count_event(
+                cumulative_input=5000,
+                cumulative_cached=1000,
+                cumulative_output=100,
+                cumulative_reasoning=49,
+            ),
+            # Event 3: Second turn
+            make_token_count_event(
+                cumulative_input=10000,
+                cumulative_cached=5000,
+                cumulative_output=300,
+                cumulative_reasoning=100,
+            ),
+            # Event 4: Duplicate of Event 3
+            make_token_count_event(
+                cumulative_input=10000,
+                cumulative_cached=5000,
+                cumulative_output=300,
+                cumulative_reasoning=100,
+            ),
+            # Event 5: Final (no duplicate)
+            make_token_count_event(
+                cumulative_input=16422,
+                cumulative_cached=10240,
+                cumulative_output=533,
+                cumulative_reasoning=128,
+            ),
+        ]
+
+        for event in events:
+            result = adapter.parse_event(event)
+            if result:
+                adapter._process_tool_call(*result)
+
+        # Final values should match the last cumulative totals exactly
+        assert adapter.session.token_usage.input_tokens == 16422
+        assert adapter.session.token_usage.cache_read_tokens == 10240
+        assert (
+            adapter.session.token_usage.output_tokens == 533
+        )  # v1.3.0: NOT combined with reasoning
+        assert adapter.session.token_usage.reasoning_tokens == 128  # v1.3.0: Tracked separately
+
+        # Total = input + output + cache_read + reasoning (note: Codex total_tokens
+        # in native doesn't include cache_read, but mcp-audit includes it for consistency)
+        expected_total = 16422 + 533 + 10240 + 128
+        assert adapter.session.token_usage.total_tokens == expected_total
+
+    def test_only_total_token_usage_used(self, adapter: CodexCLIAdapter) -> None:
+        """Test that only total_token_usage is used, not last_token_usage."""
+        # Create event where last_token_usage differs from total_token_usage
+        event = make_token_count_event(
+            input_tokens=9999,  # last_token_usage - should be IGNORED
+            cached_input_tokens=8888,
+            output_tokens=7777,
+            reasoning_tokens=6666,
+            cumulative_input=100,  # total_token_usage - should be USED
+            cumulative_cached=200,
+            cumulative_output=50,
+            cumulative_reasoning=25,
+        )
+
+        result = adapter.parse_event(event)
+        assert result is not None
+        tool_name, usage = result
+
+        # The returned usage should be from total_token_usage, not last_token_usage
+        assert usage["input_tokens"] == 100  # NOT 9999
+        assert usage["cache_read_tokens"] == 200  # NOT 8888
+        assert usage["output_tokens"] == 50  # v1.3.0: NOT combined with reasoning (NOT 75)
+        assert usage["reasoning_tokens"] == 25  # v1.3.0: Tracked separately
 
 
 if __name__ == "__main__":

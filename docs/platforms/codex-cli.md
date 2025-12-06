@@ -19,13 +19,13 @@ MCP Audit supports Codex CLI through native JSONL session file parsing.
 
 ```bash
 # Start tracking
-mcp-audit collect --platform codex_cli
+mcp-audit collect --platform codex-cli
 
 # Batch process latest session
-mcp-audit collect --platform codex_cli --batch --latest
+mcp-audit collect --platform codex-cli --batch --latest
 
 # Process specific date range
-mcp-audit collect --platform codex_cli --batch --since 2025-11-01
+mcp-audit collect --platform codex-cli --batch --since 2025-11-01
 ```
 
 ## Event Types Tracked

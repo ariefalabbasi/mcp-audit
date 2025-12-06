@@ -554,7 +554,7 @@ class TestPersistence:
 
         # v1.1.0: has _file header
         assert "_file" in data
-        assert data["_file"]["schema_version"] == "1.1.0"
+        assert data["_file"]["schema_version"] == SCHEMA_VERSION
         assert data["_file"]["type"] == "mcp_audit_session"
 
         # v1.1.0: has session block
@@ -643,7 +643,7 @@ class TestBaseTrackerIntegration:
             data = json.load(f)
 
         # v1.1.0: verify _file header
-        assert data["_file"]["schema_version"] == "1.1.0"
+        assert data["_file"]["schema_version"] == SCHEMA_VERSION
 
         # v1.1.0: verify flat tool_calls array has all 3 calls
         assert len(data["tool_calls"]) == 3

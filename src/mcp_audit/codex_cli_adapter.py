@@ -8,15 +8,20 @@ Supports both file-based reading and subprocess wrapper modes.
 Session files are stored at: ~/.codex/sessions/YYYY/MM/DD/*.jsonl
 """
 
+import contextlib
 import json
+import re
 import subprocess
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional, Tuple
 
 from .base_tracker import BaseTracker
 from .pricing_config import PricingConfig
+
+if TYPE_CHECKING:
+    from .display import DisplayAdapter, DisplaySnapshot
 
 # Human-readable model names for OpenAI models
 MODEL_DISPLAY_NAMES: Dict[str, str] = {
@@ -40,6 +45,22 @@ MODEL_DISPLAY_NAMES: Dict[str, str] = {
     # GPT-4o Series
     "gpt-4o": "GPT-4o",
     "gpt-4o-mini": "GPT-4o Mini",
+}
+
+# Codex CLI built-in tools - from official source:
+# https://github.com/openai/codex/tree/main/codex-rs/core/src/tools/handlers
+CODEX_BUILTIN_TOOLS: set[str] = {
+    "shell",  # Main shell execution (ShellHandler)
+    "shell_command",  # Alternative shell command (ShellCommandHandler)
+    "apply_patch",  # File patching (ApplyPatchHandler)
+    "grep_files",  # File search (GrepFilesHandler)
+    "list_dir",  # Directory listing (ListDirHandler)
+    "read_file",  # File reading (ReadFileHandler)
+    "view_image",  # Image viewing (ViewImageHandler)
+    "exec",  # Unified execution (UnifiedExecHandler)
+    "update_plan",  # Task planning (PlanHandler)
+    "list_mcp_resources",  # MCP resource discovery
+    "list_mcp_resource_templates",  # MCP resource templates
 }
 
 # Default exchange rate (used if not in config)
@@ -75,6 +96,7 @@ class CodexCLIAdapter(BaseTracker):
         session_file: Optional[Path] = None,
         subprocess_mode: bool = False,
         codex_args: list[str] | None = None,
+        from_start: bool = False,
     ):
         """
         Initialize Codex CLI adapter.
@@ -85,6 +107,8 @@ class CodexCLIAdapter(BaseTracker):
             session_file: Specific session file to read (overrides auto-detection)
             subprocess_mode: Use subprocess wrapper instead of file reading
             codex_args: Additional arguments to pass to codex command (subprocess mode only)
+            from_start: If True, process entire session from start. If False (default),
+                        only track new events written after mcp-audit starts.
         """
         super().__init__(project=project, platform="codex-cli")
 
@@ -92,6 +116,7 @@ class CodexCLIAdapter(BaseTracker):
         self._session_file = session_file
         self.subprocess_mode = subprocess_mode
         self.codex_args = codex_args or []
+        self._from_start = from_start
 
         self.detected_model: Optional[str] = None
         self.model_name: str = "Unknown Model"
@@ -113,6 +138,15 @@ class CodexCLIAdapter(BaseTracker):
         self.session_cwd: Optional[str] = None
         self.cli_version: Optional[str] = None
         self.git_info: Optional[Dict[str, Any]] = None
+
+        # Built-in tool tracking (task-68.3)
+        # Tracks Codex CLI built-in tools like shell_command, update_plan, etc.
+        self._builtin_tool_counts: Dict[str, int] = {}
+        self._builtin_tool_total_calls: int = 0
+
+        # Pending tool calls for duration tracking (task-68.5)
+        # Maps call_id to tool call info, waiting for function_call_output
+        self._pending_tool_calls: Dict[str, Dict[str, Any]] = {}
 
     # ========================================================================
     # Session File Discovery (Task 60.9)
@@ -264,6 +298,176 @@ class CodexCLIAdapter(BaseTracker):
         else:
             self._start_file_tracking()
 
+    def monitor(self, display: Optional["DisplayAdapter"] = None) -> None:
+        """
+        Main monitoring loop with display integration.
+
+        Args:
+            display: Optional DisplayAdapter for real-time UI updates
+        """
+        self._display = display
+        self._start_time = datetime.now()
+        self._last_display_update = 0.0
+
+        print(f"[Codex CLI] Initializing tracker for: {self.project}")
+
+        # Find session file
+        session_file = self.get_latest_session_file()
+        if not session_file:
+            print("[Codex CLI] No session files found.")
+            print(f"[Codex CLI] Expected at: {self.codex_dir}/sessions/YYYY/MM/DD/")
+
+            # List recent sessions if any exist
+            recent = self.list_sessions(limit=5)
+            if recent:
+                print("[Codex CLI] Available sessions:")
+                for path, mtime, _sid in recent:
+                    print(f"  - {path.name} ({mtime.strftime('%Y-%m-%d %H:%M')})")
+            return
+
+        print(f"[Codex CLI] Monitoring: {session_file}")
+        self.session.source_files = [session_file.name]
+
+        # Initialize file position based on from_start flag
+        if not self._from_start:
+            # Skip to end - only track NEW events
+            with open(session_file) as f:
+                self._processed_lines = sum(1 for _ in f)
+            print(
+                f"[Codex CLI] Tracking NEW events only (skipped {self._processed_lines} existing lines)"
+            )
+        else:
+            print("[Codex CLI] Processing from start (--from-start)")
+
+        print("[Codex CLI] Tracking started. Press Ctrl+C to stop.")
+
+        # Main monitoring loop with display updates
+        while True:
+            try:
+                self._process_session_file(session_file)
+
+                # Update display periodically (every 0.5 seconds)
+                if display:
+                    now = time.time()
+                    if now - self._last_display_update >= 0.5:
+                        self._last_display_update = now
+                        snapshot = self._build_display_snapshot()
+                        display.update(snapshot)
+
+                time.sleep(0.2)
+
+            except KeyboardInterrupt:
+                print("\n[Codex CLI] Stopping tracker...")
+                break
+
+    def _build_display_snapshot(self) -> "DisplaySnapshot":
+        """Build DisplaySnapshot from current session state."""
+        from .display import DisplaySnapshot
+
+        # Calculate duration
+        duration_seconds = (datetime.now() - self._start_time).total_seconds()
+
+        # Get token usage
+        usage = self.session.token_usage
+        input_tokens = usage.input_tokens
+        output_tokens = usage.output_tokens
+        cache_created = usage.cache_created_tokens
+        cache_read = usage.cache_read_tokens
+        total_tokens = usage.total_tokens
+
+        # Calculate cache efficiency
+        total_input = input_tokens + cache_created + cache_read
+        cache_efficiency = cache_read / total_input if total_input > 0 else 0.0
+
+        # Build top tools list (use self.server_sessions for live tracking - task-66.9)
+        top_tools = []
+        total_mcp_calls = 0
+        for server_session in self.server_sessions.values():
+            total_mcp_calls += server_session.total_calls
+            for tool_name, tool_stats in server_session.tools.items():
+                avg_tokens = (
+                    tool_stats.total_tokens // tool_stats.calls if tool_stats.calls > 0 else 0
+                )
+                top_tools.append((tool_name, tool_stats.calls, tool_stats.total_tokens, avg_tokens))
+        top_tools.sort(key=lambda x: x[2], reverse=True)
+
+        # Get pricing for cost calculation
+        pricing = PricingConfig()
+        model_id = self.detected_model or ""
+
+        # Calculate costs
+        cost_with_cache = 0.0
+        cost_without_cache = 0.0
+        if pricing.loaded and model_id:
+            # Cost with cache
+            cost_with_cache = pricing.calculate_cost(
+                model_id, input_tokens, output_tokens, cache_created, cache_read
+            )
+            # Cost without cache (all cache_read would be regular input)
+            cost_without_cache = pricing.calculate_cost(
+                model_id, input_tokens + cache_read, output_tokens, 0, 0
+            )
+
+            # Save costs to session for persistence (task-66.8)
+            self.session.cost_estimate = cost_with_cache
+            self.session.cost_no_cache = cost_without_cache
+            self.session.cache_savings_usd = cost_without_cache - cost_with_cache
+
+        # Build server hierarchy for live TUI display (task-68.1)
+        server_hierarchy: List[Tuple[str, int, int, int, List[Tuple[str, int, int, float]]]] = []
+        for server_name, server_session in self.server_sessions.items():
+            server_calls = server_session.total_calls
+            server_tokens = server_session.total_tokens
+            server_avg = server_tokens // server_calls if server_calls > 0 else 0
+
+            # Build tools list for this server
+            tools_list: List[Tuple[str, int, int, float]] = []
+            for tool_name, tool_stats in server_session.tools.items():
+                # Extract short name (remove mcp__server__ prefix)
+                short_name = tool_name.split("__")[-1] if "__" in tool_name else tool_name
+                tool_pct = (
+                    (tool_stats.total_tokens / server_tokens * 100) if server_tokens > 0 else 0.0
+                )
+                tools_list.append((short_name, tool_stats.calls, tool_stats.total_tokens, tool_pct))
+
+            server_hierarchy.append(
+                (server_name, server_calls, server_tokens, server_avg, tools_list)
+            )
+
+        return DisplaySnapshot.create(
+            project=self.project,
+            platform="codex-cli",
+            start_time=self._start_time,
+            duration_seconds=duration_seconds,
+            model_id=self.detected_model or "",
+            model_name=self.model_name,
+            message_count=self.session.message_count,
+            total_tokens=total_tokens,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cache_created_tokens=cache_created,
+            cache_read_tokens=cache_read,
+            reasoning_tokens=usage.reasoning_tokens,  # v1.3.0: Codex reasoning_output_tokens
+            cache_tokens=cache_created + cache_read,
+            cache_efficiency=cache_efficiency,
+            total_tool_calls=total_mcp_calls,  # Use computed value for live tracking (task-66.9)
+            top_tools=top_tools[:10],
+            cost_estimate=cost_with_cache,
+            cost_no_cache=cost_without_cache,
+            cache_savings=cost_without_cache - cost_with_cache,
+            savings_percent=(
+                ((cost_without_cache - cost_with_cache) / cost_without_cache * 100)
+                if cost_without_cache > 0
+                else 0.0
+            ),
+            tracking_mode="full" if self._from_start else "live",
+            # Built-in tool tracking (task-68.3)
+            builtin_tool_calls=self._builtin_tool_total_calls,
+            builtin_tool_tokens=0,  # Codex CLI doesn't provide per-tool tokens
+            # Server hierarchy for live TUI (task-68.1)
+            server_hierarchy=server_hierarchy,
+        )
+
     def _start_file_tracking(self) -> None:
         """Start file-based session monitoring."""
         print(f"[Codex CLI] Initializing tracker for: {self.project}")
@@ -284,6 +488,17 @@ class CodexCLIAdapter(BaseTracker):
 
         print(f"[Codex CLI] Monitoring: {session_file}")
         self.session.source_files = [session_file.name]
+
+        # Initialize file position based on from_start flag
+        if not self._from_start:
+            # Skip to end - only track NEW events
+            with open(session_file) as f:
+                self._processed_lines = sum(1 for _ in f)
+            print(
+                f"[Codex CLI] Tracking NEW events only (skipped {self._processed_lines} existing lines)"
+            )
+        else:
+            print("[Codex CLI] Processing from start (--from-start)")
 
         print("[Codex CLI] Tracking started. Press Ctrl+C to stop.")
 
@@ -386,6 +601,10 @@ class CodexCLIAdapter(BaseTracker):
             if event_type == "response_item" and payload.get("type") == "function_call":
                 return self._parse_function_call(payload)
 
+            # Handle function_call_output events for tool duration (task-68.5)
+            if event_type == "response_item" and payload.get("type") == "function_call_output":
+                return self._parse_function_call_output(payload)
+
             return None
 
         except (json.JSONDecodeError, KeyError, ValueError) as e:
@@ -404,19 +623,23 @@ class CodexCLIAdapter(BaseTracker):
 
     def _parse_turn_context(self, payload: Dict[str, Any]) -> None:
         """
-        Parse turn_context event for model detection.
+        Parse turn_context event for model detection and message counting.
+
+        Each turn_context event represents a new conversation turn (assistant response).
 
         Args:
             payload: The event payload containing model info
         """
-        if self.detected_model:
-            return None
+        # Count each turn_context as a message (assistant turn)
+        self.session.message_count += 1
 
-        model_id = payload.get("model")
-        if model_id:
-            self.detected_model = model_id
-            self.model_name = MODEL_DISPLAY_NAMES.get(model_id, model_id)
-            self.session.model = model_id
+        # Only set model once (first turn_context with model info)
+        if not self.detected_model:
+            model_id = payload.get("model")
+            if model_id:
+                self.detected_model = model_id
+                self.model_name = MODEL_DISPLAY_NAMES.get(model_id, model_id)
+                self.session.model = model_id
 
         return None
 
@@ -425,32 +648,37 @@ class CodexCLIAdapter(BaseTracker):
         Parse token_count event for token usage.
 
         Codex CLI provides both total_token_usage (cumulative) and
-        last_token_usage (delta). We use last_token_usage for incremental tracking.
+        last_token_usage (delta). We use total_token_usage (cumulative) because
+        Codex CLI native logs contain duplicate events that would cause
+        double-counting if we summed last_token_usage values.
+
+        The cumulative values are used to REPLACE session totals (not add).
 
         Args:
             payload: The event payload with token info
 
         Returns:
-            Tuple of ("__session__", usage_dict) with token data
+            Tuple of ("__session__", usage_dict) with cumulative token data
         """
         info = payload.get("info")
         if not info:
             return None
 
-        # Use last_token_usage for incremental tracking (delta from last event)
-        # Fall back to total_token_usage if last not available
-        usage = info.get("last_token_usage") or info.get("total_token_usage", {})
+        # Use total_token_usage (cumulative) to avoid double-counting from
+        # duplicate events in Codex CLI native logs. See Task 79 for details.
+        usage = info.get("total_token_usage", {})
 
         if not usage:
             return None
 
         # Codex CLI token field names
+        # v1.3.0: Keep reasoning_tokens separate (previously combined into output_tokens)
         usage_dict = {
             "input_tokens": usage.get("input_tokens", 0),
-            "output_tokens": usage.get("output_tokens", 0)
-            + usage.get("reasoning_output_tokens", 0),
+            "output_tokens": usage.get("output_tokens", 0),  # v1.3.0: No longer includes reasoning
             "cache_created_tokens": 0,  # Codex doesn't have cache creation
             "cache_read_tokens": usage.get("cached_input_tokens", 0),
+            "reasoning_tokens": usage.get("reasoning_output_tokens", 0),  # v1.3.0: Separate field
         }
 
         total_tokens = sum(usage_dict.values())
@@ -461,20 +689,38 @@ class CodexCLIAdapter(BaseTracker):
 
     def _parse_function_call(self, payload: Dict[str, Any]) -> Optional[Tuple[str, Dict[str, Any]]]:
         """
-        Parse function_call event for MCP tool calls.
+        Parse function_call event for tool calls.
 
-        Only returns events for MCP tools (name starts with "mcp__").
+        Handles both MCP tools (name starts with "mcp__") and built-in tools.
+        MCP tools are recorded immediately; duration is updated later via function_call_output.
+        Built-in tools are counted separately.
 
         Args:
             payload: The event payload with tool call info
 
         Returns:
-            Tuple of (tool_name, usage_dict) for MCP tool calls
+            Tuple of (tool_name, usage_dict) for MCP tool calls, None for built-in tools
+            (built-in tools are tracked internally via _builtin_tool_counts)
         """
         tool_name = payload.get("name", "")
+        call_id = payload.get("call_id")
 
-        # Only track MCP tools
+        # Track built-in tools separately (task-68.3, task-78)
+        # Known tools documented in CODEX_BUILTIN_TOOLS; pattern catches any new ones
         if not tool_name.startswith("mcp__"):
+            # Increment built-in tool counters
+            if tool_name not in self._builtin_tool_counts:
+                self._builtin_tool_counts[tool_name] = 0
+            self._builtin_tool_counts[tool_name] += 1
+            self._builtin_tool_total_calls += 1
+
+            # Update session's builtin_tool_stats for persistence (task-78)
+            # Note: Codex CLI doesn't provide per-tool token counts
+            if tool_name not in self.session.builtin_tool_stats:
+                self.session.builtin_tool_stats[tool_name] = {"calls": 0, "tokens": 0}
+            self.session.builtin_tool_stats[tool_name]["calls"] += 1
+            # tokens remain 0 as Codex doesn't provide per-tool token attribution
+
             return None
 
         # Parse arguments if available
@@ -484,6 +730,13 @@ class CodexCLIAdapter(BaseTracker):
         except json.JSONDecodeError:
             tool_params = {}
 
+        # Store call_id mapping for duration update (task-68.5)
+        # Duration will be updated when function_call_output is received
+        if call_id:
+            self._pending_tool_calls[call_id] = {
+                "tool_name": tool_name,
+            }
+
         # MCP tool calls don't include token usage directly
         # Tokens are tracked separately via token_count events
         usage_dict = {
@@ -492,10 +745,99 @@ class CodexCLIAdapter(BaseTracker):
             "cache_created_tokens": 0,
             "cache_read_tokens": 0,
             "tool_params": tool_params,
-            "call_id": payload.get("call_id"),
+            "call_id": call_id,
+            "duration_ms": 0,  # Updated later via function_call_output
         }
 
         return (tool_name, usage_dict)
+
+    def _parse_function_call_output(
+        self, payload: Dict[str, Any]
+    ) -> Optional[Tuple[str, Dict[str, Any]]]:
+        """
+        Parse function_call_output event to extract tool duration (task-68.5).
+
+        Extracts "Wall time: X seconds" from output. The duration is associated
+        with the matching call_id to update the tool call's duration.
+
+        Note: Since tool calls are recorded immediately when function_call is received,
+        this method updates the duration of the already-recorded call if it can find it.
+        For live tracking, this provides accurate duration reporting.
+
+        Args:
+            payload: The event payload with output and call_id
+
+        Returns:
+            None (duration updates are applied directly to recorded calls)
+        """
+        call_id = payload.get("call_id")
+        output = payload.get("output", "")
+
+        # Handle output being a list (some Codex CLI events have list outputs)
+        if isinstance(output, list):
+            output = "\n".join(str(item) for item in output)
+        elif not isinstance(output, str):
+            output = str(output) if output else ""
+
+        # Extract wall time from output
+        duration_ms = 0
+        match = re.search(r"Wall time:\s*([\d.]+)\s*seconds?", output)
+        if match:
+            with contextlib.suppress(ValueError):
+                duration_ms = int(float(match.group(1)) * 1000)
+
+        # Clean up pending call entry (we don't need it anymore)
+        if call_id and call_id in self._pending_tool_calls:
+            pending = self._pending_tool_calls.pop(call_id)
+            tool_name = pending["tool_name"]
+
+            # Try to find and update the recorded call's duration
+            # This updates the Call object in the server_session's tool_stats
+            self._update_call_duration(tool_name, call_id, duration_ms)
+
+        return None
+
+    def _update_call_duration(self, tool_name: str, call_id: str, duration_ms: int) -> None:
+        """
+        Update duration for a recorded tool call (task-68.5).
+
+        Searches server_sessions for the matching call and updates its duration.
+
+        Args:
+            tool_name: The MCP tool name
+            call_id: The call ID to match
+            duration_ms: Duration in milliseconds
+        """
+        if duration_ms <= 0:
+            return
+
+        # Normalize tool name to match how it was recorded
+        normalized_tool = self.normalize_tool_name(tool_name)
+        server_name = self.normalize_server_name(normalized_tool)
+
+        if server_name not in self.server_sessions:
+            return
+
+        server_session = self.server_sessions[server_name]
+        if normalized_tool not in server_session.tools:
+            return
+
+        tool_stats = server_session.tools[normalized_tool]
+
+        # Find the call by call_id and update duration
+        for call in tool_stats.call_history:
+            if call.platform_data and call.platform_data.get("call_id") == call_id:
+                call.duration_ms = duration_ms
+                # Update tool stats
+                if tool_stats.total_duration_ms is None:
+                    tool_stats.total_duration_ms = 0
+                tool_stats.total_duration_ms += duration_ms
+                tool_stats.avg_duration_ms = tool_stats.total_duration_ms / tool_stats.calls
+                if tool_stats.max_duration_ms is None or duration_ms > tool_stats.max_duration_ms:
+                    tool_stats.max_duration_ms = duration_ms
+                if tool_stats.min_duration_ms is None or duration_ms < tool_stats.min_duration_ms:
+                    tool_stats.min_duration_ms = duration_ms
+                break
 
     def get_platform_metadata(self) -> Dict[str, Any]:
         """Get Codex CLI platform metadata."""
@@ -508,6 +850,9 @@ class CodexCLIAdapter(BaseTracker):
             "cli_version": self.cli_version,
             "session_cwd": self.session_cwd,
             "git_info": self.git_info,
+            # Built-in tool tracking (task-68.3)
+            "builtin_tools": self._builtin_tool_counts,
+            "builtin_tool_total_calls": self._builtin_tool_total_calls,
         }
 
     # ========================================================================
@@ -565,20 +910,26 @@ class CodexCLIAdapter(BaseTracker):
             tool_name: MCP tool name or "__session__" for non-MCP events
             usage: Token usage dictionary
         """
+        # v1.3.0: Include reasoning_tokens in total
+        reasoning_tokens = usage.get("reasoning_tokens", 0)
         total_tokens = (
             usage["input_tokens"]
             + usage["output_tokens"]
             + usage["cache_created_tokens"]
             + usage["cache_read_tokens"]
+            + reasoning_tokens
         )
 
         # Handle session-level token tracking (non-MCP events)
+        # REPLACE values (not add) because we use cumulative total_token_usage
+        # to avoid double-counting from duplicate events. See Task 79.
         if tool_name == "__session__":
-            self.session.token_usage.input_tokens += usage["input_tokens"]
-            self.session.token_usage.output_tokens += usage["output_tokens"]
-            self.session.token_usage.cache_created_tokens += usage["cache_created_tokens"]
-            self.session.token_usage.cache_read_tokens += usage["cache_read_tokens"]
-            self.session.token_usage.total_tokens += total_tokens
+            self.session.token_usage.input_tokens = usage["input_tokens"]
+            self.session.token_usage.output_tokens = usage["output_tokens"]
+            self.session.token_usage.cache_created_tokens = usage["cache_created_tokens"]
+            self.session.token_usage.cache_read_tokens = usage["cache_read_tokens"]
+            self.session.token_usage.reasoning_tokens = reasoning_tokens  # v1.3.0
+            self.session.token_usage.total_tokens = total_tokens
 
             # Recalculate cache efficiency
             total_input = (
@@ -598,20 +949,35 @@ class CodexCLIAdapter(BaseTracker):
         if tool_params:
             content_hash = self.compute_content_hash(tool_params)
 
-        # Get platform metadata
-        platform_data = {"model": self.detected_model, "model_name": self.model_name}
+        # Get platform metadata - include call_id for duration update (task-68.5)
+        platform_data = {
+            "model": self.detected_model,
+            "model_name": self.model_name,
+            "call_id": usage.get("call_id"),
+        }
 
         # Record tool call using BaseTracker
+        # Duration comes from function_call_output parsing (task-68.5)
         self.record_tool_call(
             tool_name=tool_name,
             input_tokens=usage["input_tokens"],
             output_tokens=usage["output_tokens"],
             cache_created_tokens=usage["cache_created_tokens"],
             cache_read_tokens=usage["cache_read_tokens"],
-            duration_ms=0,  # Codex CLI doesn't provide duration
+            duration_ms=usage.get("duration_ms", 0),
             content_hash=content_hash,
             platform_data=platform_data,
         )
+
+        # Notify display for Recent Activity feed (task-68.2)
+        # Use normalized tool name for consistency (task-68.7)
+        if hasattr(self, "_display") and self._display is not None:
+            normalized_tool = self.normalize_tool_name(tool_name)
+            self._display.on_event(
+                tool_name=normalized_tool,
+                tokens=total_tokens,
+                timestamp=datetime.now(timezone.utc),
+            )
 
     # ========================================================================
     # Batch Processing (for report generation)
@@ -766,7 +1132,7 @@ def main() -> int:
     output_dir = Path(args.output)
     adapter.save_session(output_dir)
 
-    print(f"\nSession saved to: {adapter.session_dir}")
+    print(f"\nSession saved to: {adapter.session_path}")
     print(f"Total tokens: {session.token_usage.total_tokens:,}")
     print(f"MCP calls: {session.mcp_tool_calls.total_calls}")
     print(f"Cache efficiency: {session.token_usage.cache_efficiency:.1%}")
