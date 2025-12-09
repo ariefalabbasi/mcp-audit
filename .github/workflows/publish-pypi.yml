@@ -1,0 +1,70 @@
+# ============================================================================
+# Publish to PyPI (Public Repo)
+# ============================================================================
+# This workflow runs FROM the public repo (mcp-audit) so that:
+# 1. OIDC token originates from littlebearapps/mcp-audit
+# 2. URLs pointing to this repo are verified on PyPI
+#
+# Triggered by workflow_dispatch from release-both.yml in master repo.
+#
+# PyPI Trusted Publisher config required:
+#   - Owner: littlebearapps
+#   - Repository: mcp-audit
+#   - Workflow: publish-pypi.yml
+#   - Environment: pypi
+# ============================================================================
+
+name: Publish to PyPI
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to publish (e.g., v0.4.2)'
+        required: true
+        type: string
+
+jobs:
+  publish:
+    name: Build and Publish
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/mcp-audit/
+    permissions:
+      id-token: write  # Required for Trusted Publishing
+      contents: read
+    steps:
+      - name: Checkout at tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+
+      - name: Validate tag exists
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          if ! git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "::error::Tag $TAG does not exist"
+            exit 1
+          fi
+          echo "::notice::Publishing from tag $TAG"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine
+
+      - name: Build package
+        run: python -m build
+
+      - name: Check package
+        run: twine check dist/*
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

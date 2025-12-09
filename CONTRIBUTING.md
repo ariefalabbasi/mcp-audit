@@ -489,9 +489,10 @@ def test_session_processing(sample_session):
 
 ### Before You Start
 
-1. **Check existing issues** - Is there already an issue or PR for this?
-2. **Open an issue first** - For significant changes, discuss before coding
-3. **Fork the repository** - Work in your own fork
+1. **Bug fixes**: Check if an [Issue](https://github.com/littlebearapps/mcp-audit/issues) already exists
+2. **New features**: Start a [Discussion](https://github.com/littlebearapps/mcp-audit/discussions/new?category=ideas) first
+3. **Questions**: Use [Q&A Discussions](https://github.com/littlebearapps/mcp-audit/discussions/categories/q-a)
+4. **Fork the repository** - Work in your own fork
 
 ### Development Flow
 

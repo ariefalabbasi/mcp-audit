@@ -5,6 +5,176 @@ All notable changes to MCP Audit will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+> **Note:** Starting with v0.5.0, all entries reference GitHub Issues (e.g., `[#16](url)`).
+> Earlier versions reference internal task IDs (e.g., `Task 69`).
+
+## [0.4.2] - 2025-12-09
+
+### Changed
+- **README overhaul for better onboarding**
+  - New "What mcp-audit Does (At a Glance)" section with categorized features
+  - Highlighted platform Getting Started guides in Documentation section
+  - Renamed FAQ sections: "MCP Problems mcp-audit Helps Solve" and "Usage & Support FAQ"
+  - Consolidated Compatibility section (Python + Platform support)
+  - Dynamic version badge in "What's New" section
+- **PyPI page improvements**
+  - All relative links converted to full GitHub URLs for PyPI compatibility
+  - Fixed GitHub-only `[!TIP]` alert syntax for cross-platform rendering
+  - Converted HTML table to Markdown for consistent rendering
+  - Added `Source` and `Discussions` project URLs
+
+### Fixed
+- **PyPI URL verification** - Publish workflow now runs from public repo
+  - OIDC token originates from `littlebearapps/mcp-audit` (public)
+  - All GitHub URLs now eligible for PyPI "Verified" status
+  - New `publish-pypi.yml` workflow for Trusted Publishing
+
+## [0.4.1] - 2025-12-08
+
+### Fixed
+- **Demo GIF display on PyPI** - Use absolute URL for cross-platform compatibility
+
+## [0.4.0] - 2025-12-08
+
+### Added
+- **MCP tool token estimation for Codex CLI and Gemini CLI** (Task 69)
+  - `TokenEstimator` class with platform-specific tokenizers
+  - Codex CLI: tiktoken o200k_base (~99-100% accuracy)
+  - Gemini CLI: SentencePiece/Gemma (100%) or tiktoken fallback (~95%)
+  - Per-tool estimated tokens shown in TUI and session logs
+  - `FUNCTION_CALL_OVERHEAD` constant (25 tokens) for API formatting
+- **Schema v1.4.0** - Per-call estimation metadata
+  - `is_estimated` field indicates estimated vs native tokens
+  - `estimation_method` field (tiktoken/sentencepiece/character)
+  - `estimation_encoding` field (o200k_base/gemma/cl100k_base)
+- **Theme system with Catppuccin support** (Task 83)
+  - Catppuccin Mocha (dark) and Latte (light) color palettes
+  - High-contrast themes (hc-dark, hc-light) meeting WCAG AAA
+  - Auto-detection of terminal background color
+  - `--theme` CLI option: auto, dark, light, hc-dark, hc-light
+  - `MCP_AUDIT_THEME` environment variable
+- **ASCII mode** for terminals without unicode support
+  - `--ascii` flag or `MCP_AUDIT_ASCII=1` environment variable
+  - Box-drawing with ASCII characters, no emoji
+- **NO_COLOR standard compliance** - [no-color.org](https://no-color.org/)
+  - Set `NO_COLOR=1` to disable all color output
+- **GitHub Release download for Gemma tokenizer** (Task 96)
+  - `mcp-audit tokenizer download` fetches from GitHub Releases (no signup)
+  - `--source` flag (github/huggingface)
+  - `--release` flag to download specific version
+  - SHA256 checksum verification
+  - Version tracking via `tokenizer.meta.json`
+- **"Noisy fallback" pattern** - Users informed when using approximate accuracy
+  - One-time hint during Gemini CLI collection about tokenizer download
+  - `mcp-audit tokenizer status` shows accuracy implications
+- **Manual installation guide** - `docs/manual-tokenizer-install.md` for corporate networks
+
+### Changed
+- **Package size reduced from ~5MB to <500KB** - Gemma tokenizer now optional download
+  - Pip package no longer bundles the 4MB tokenizer
+  - Tokenizer available via `mcp-audit tokenizer download`
+  - Gemini CLI works immediately with ~95% accuracy (tiktoken fallback)
+- **TUI enhancements**
+  - Token panel title shows estimation method when applicable
+  - Final summary shows estimation stats (e.g., "5 calls with tiktoken estimation")
+  - Theme-aware colors throughout
+- **Improved `mcp-audit tokenizer status` output** - Clearer terminology
+  - Shows "Downloaded (persistent)" instead of "cached"
+  - Displays version and download timestamp
+
+### Security
+- **Path traversal protection** for tarball extraction (`_validate_tarball_member()`)
+- **SHA256 checksum verification** for downloaded tokenizer integrity
+
+### Notes
+- **Gemini CLI users**: Run `mcp-audit tokenizer download` for 100% token accuracy
+- **Claude Code users**: No action needed - has native per-tool token attribution
+- **Codex CLI users**: No action needed - uses tiktoken (~99-100% accuracy)
+- Corporate network users: See `docs/manual-tokenizer-install.md`
+
+## [0.3.14] - 2025-12-06
+
+### Added
+- **Schema v1.3.0: Reasoning tokens** - Track thinking/reasoning tokens separately from output
+  - `reasoning_tokens` field in `token_usage` block
+  - Codex CLI: maps to `reasoning_output_tokens` (o-series models)
+  - Gemini CLI: maps to `thoughts` (Gemini 2.0+ responses)
+  - Claude Code: always 0 (no thinking tokens exposed)
+  - TUI displays "Reasoning" row only when > 0 (auto-hides for Claude Code)
+- **Schema v1.2.0: Built-in tool tracking** - Persist built-in tool stats to session files
+  - `builtin_tool_summary` block with per-tool calls and tokens
+  - Claude Code: Full token attribution per built-in tool
+  - Codex CLI / Gemini CLI: Call counts only (no per-tool tokens)
+- **BUILTIN_TOOLS documentation** - Official tool names from upstream sources
+  - `CLAUDE_CODE_BUILTIN_TOOLS` (18 tools) from anthropics/claude-code
+  - `CODEX_BUILTIN_TOOLS` (11 tools) from openai/codex
+  - `GEMINI_BUILTIN_TOOLS` (12 tools) from google-gemini/gemini-cli
+- **Automated test harness** - Cross-platform testing scripts
+  - `scripts/test-harness.sh` - Automated testing with `--platform` and `--quick` flags
+  - `scripts/compare-results.sh` - Test result analysis and regression detection
+  - `docs/automated-testing-plan.md` - Complete test strategy documentation
+  - `docs/local-testing-guide.md` - Manual testing procedures
+- **Comprehensive platform validation** - Tasks 75-77 completed
+  - Claude Code, Codex CLI, and Gemini CLI thoroughly validated
+  - Evidence directories with TUI captures and session analysis
+
+### Changed
+- **Data contract** - Updated to schema v1.3.0 with full backward compatibility
+  - Added `reasoning_tokens` field documentation
+  - Added `builtin_tool_summary` block documentation (v1.2.0)
+  - Updated platform-specific behavior tables
+- **Platform documentation** - Updated PLATFORM-TOKEN-CAPABILITIES.md
+  - Documented reasoning token support per platform
+  - Documented built-in tool tracking differences
+
+### Fixed
+- **Codex CLI token double-counting** (Task 79) - Critical bug fix
+  - Root cause: Codex CLI native logs contain duplicate `token_count` events
+  - Old behavior: Summing `last_token_usage` (delta) caused double-counting
+  - New behavior: Use cumulative `total_token_usage` and REPLACE session totals
+  - Accurate token tracking regardless of duplicate events in logs
+
+## [0.3.13] - 2025-12-03
+
+### Added
+- **Gemini CLI adapter rewrite** - Complete rewrite to parse native JSON session files
+  - No OTEL/telemetry setup required - reads `~/.gemini/tmp/<hash>/chats/session-*.json` directly
+  - Project hash auto-detection from working directory (SHA256)
+  - Per-message token tracking: input, output, cached, thoughts, tool, total
+  - Thinking tokens tracked separately (`thoughts_tokens` field)
+  - Tool call detection via `toolCalls` array with `mcp__` prefix filtering
+  - Model detection from session data
+- **Codex CLI adapter enhancements** - File-based session reading without subprocess wrapping
+  - Session auto-discovery with `--latest` flag
+  - Date range filtering with `--since` and `--until` options
+  - File watcher for live session monitoring
+- **Platform-aware reports** - New `--platform` filter for `mcp-audit report`
+  - Multi-platform aggregation in reports
+  - Platform breakdown in summary statistics
+- **Unified cost comparison** - Cross-platform cost efficiency analysis
+  - Cost per 1M tokens by platform
+  - Cost per session by platform
+  - "Most efficient platform" indicator
+- **Setup guides** - Comprehensive documentation for each platform
+  - `docs/codex-cli-setup.md` - Codex CLI installation and usage
+  - `docs/gemini-cli-setup.md` - Gemini CLI installation and usage
+- **Gemini model pricing** - Added Gemini 2.0, 2.5, and 3.0 series to `mcp-audit.toml`
+- **Codex model pricing** - Added GPT-5 series and Codex-specific models
+
+### Changed
+- **Gemini CLI** - Removed OTEL telemetry dependency entirely
+- **Documentation** - Updated architecture.md, ROADMAP.md, platform docs for new adapters
+- **Examples** - Updated gemini-cli-session example with new JSON format
+
+### Fixed
+- **Gemini CLI tracking** - Now works out-of-the-box without any telemetry configuration
+
+## [0.3.12] - 2025-12-02
+
+### Fixed
+- **Public sync workflow** - Fixed sync to include hidden files (.github/)
+- **GitHub topics** - Synced 14 repository topics to public repo
+
 ## [0.3.11] - 2025-12-02
 
 ### Added

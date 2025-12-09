@@ -2,11 +2,13 @@
 name: Platform Support Request
 about: Request support for a new platform or CLI tool
 title: '[PLATFORM] Add support for '
-labels: platform-support, enhancement
+labels: enhancement, needs-triage
 assignees: ''
 ---
 
 ## Platform Information
+
+> **Privacy Note**: Do not include API keys, tokens, or sensitive file paths in your report.
 
 **Platform Name**:
 <!-- e.g., Aider, Cursor, Custom CLI -->

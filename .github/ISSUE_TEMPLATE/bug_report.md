@@ -2,13 +2,15 @@
 name: Bug Report
 about: Report a bug or unexpected behavior
 title: '[BUG] '
-labels: bug
+labels: bug, needs-triage
 assignees: ''
 ---
 
 ## Bug Description
 
 <!-- A clear and concise description of the bug -->
+
+> **Privacy Note**: Do not include API keys, tokens, or sensitive file paths in your report.
 
 ## Environment
 
@@ -19,7 +21,7 @@ assignees: ''
 <!-- Output of: python --version -->
 
 **MCP Audit Version**:
-<!-- Output of: python mcp_analyze_cli.py --version -->
+<!-- Output of: mcp-audit --version -->
 
 **Operating System**:
 <!-- e.g., macOS 14.0, Ubuntu 22.04, Windows 11 -->

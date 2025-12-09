@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mcp-audit"
-version = "0.4.1"
+version = "0.4.2"
 description = "Real-time MCP token tracker for Claude Code, Codex CLI & Gemini CLI. Investigate context bloat and high token usage at the source."
 readme = "README.md"
 license = "MIT"
@@ -58,8 +58,10 @@ mcp-audit = "mcp_audit.cli:main"
 Homepage = "https://github.com/littlebearapps/mcp-audit"
 Documentation = "https://github.com/littlebearapps/mcp-audit#readme"
 Repository = "https://github.com/littlebearapps/mcp-audit"
+Source = "https://github.com/littlebearapps/mcp-audit"
 Issues = "https://github.com/littlebearapps/mcp-audit/issues"
 Changelog = "https://github.com/littlebearapps/mcp-audit/blob/main/CHANGELOG.md"
+Discussions = "https://github.com/littlebearapps/mcp-audit/discussions"
 
 [tool.setuptools.packages.find]
 where = ["src"]

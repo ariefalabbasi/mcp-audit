@@ -4,84 +4,174 @@ This document outlines the planned development direction for MCP Audit. For comp
 
 ## Current Status
 
-**Version**: v0.4.x
+**Version**: v0.4.1
 **Stage**: Stable for daily use
 
 MCP Audit provides stable support for Claude Code, Codex CLI, and Gemini CLI. The core tracking and reporting functionality is production-ready.
 
-## Released (v0.4.0) - December 2025
+---
 
-- [x] **Token estimation for Codex/Gemini CLI** - Per-tool token estimation via tiktoken and sentencepiece (Task 69)
-- [x] **Theme system** - Catppuccin Mocha/Latte, high-contrast themes, ASCII mode, `--theme` CLI option (Task 83)
-- [x] **Schema v1.4.0** - Per-call estimation metadata (`is_estimated`, `estimation_method`, `estimation_encoding`)
-- [x] **Optional Gemma tokenizer** - Package size reduced to <500KB, tokenizer downloaded from GitHub Releases (Task 96)
+## v0.5.0 — Insight Layer
 
-## Upcoming (v0.5.0)
+**Theme:** "See What's Wrong"
 
-Target: Q1 2026
-**Theme:** "MCP Efficiency Intelligence"
+The foundation for efficiency insights and AI-assisted analysis.
 
-- [ ] **Smell Engine** - Detect 5 efficiency patterns: HIGH_VARIANCE, TOP_CONSUMER, HIGH_MCP_SHARE, CHATTY, LOW_CACHE_HIT (Task 85)
-- [ ] **AI Prompt Export** - `mcp-audit export ai-prompt` command for AI analysis integration (Task 86)
-- [ ] **Data Quality System** - Session-level `data_quality` block with accuracy labels (exact/estimated/calls-only) (Task 87)
-- [ ] **Zombie Tool Detection** - Identify MCP tools defined but never called (Task 88)
-- [ ] **TUI: Enhanced Live Overview** - Smells panel, data quality indicator, keybindings (Task 89)
-- [ ] **TUI: Session Browser** - New `mcp-audit ui` command for exploring past sessions (Task 90)
-- [ ] **Dynamic Pricing via LiteLLM** - Fetch pricing from LiteLLM JSON with static TOML fallback and caching (Task 59.5, 59.6)
-- [ ] **Schema v1.5.0** - `smells`, `data_quality`, `zombie_tools` blocks (Task 91)
+- **Smell Engine MVP** — Detect 5 efficiency patterns: HIGH_VARIANCE, TOP_CONSUMER, HIGH_MCP_SHARE, CHATTY, LOW_CACHE_HIT
+- **Zombie Tool Detection** — Identify MCP tools defined but never called
+- **Data Quality System** — Accuracy labels: exact/estimated/calls-only
+- **AI Prompt Export MVP** — `mcp-audit export ai-prompt` for AI analysis
+- **Schema v1.5.0** — `smells`, `data_quality`, `zombie_tools` blocks
 
-## Future (v0.6.0)
+**Success Metrics:**
+- Users can identify inefficient MCP usage patterns
+- AI assistants can consume session data for analysis
+- Clear accuracy labeling for all metrics
 
-Target: Q2 2026
-**Theme:** "Deeper Analysis + Multi-Model Sessions"
+➡️ [View Milestone](https://github.com/littlebearapps/mcp-audit/milestone/1)
 
-- [ ] **Multi-Model Per-Session Support** - Track per-model tokens/costs when users switch models mid-session (Task 59.0, 59.2, 59.3, 59.4)
-  - Per-call model tagging (`model` field on each tool call)
-  - Session-level model summary (`models_used`, `model_usage` with per-model tokens/costs)
-  - TUI "Models Used" block for multi-model sessions
-  - AI Export model breakdown
-  - Accuracy metadata (`models_mixed` flag)
-- [ ] **Static Cost Tracking** - Measure MCP server schema token weight (context tax) (Task 92)
-- [ ] **Ollama CLI Support** - Track local model sessions (calls-only mode for models without token counts) (Task 93)
-- [ ] **Schema v1.6.0** - `static_cost` block, `models_used`, `model_usage`, Ollama platform support (Task 94)
+---
 
-## v1.0.0 (Stable Release)
+## v0.6.0 — Platform Layer
 
-Target: Q3-Q4 2026
-**Theme:** "Production Ready"
+**Theme:** "Track Everything"
 
-- [ ] All v0.5.0 and v0.6.0 features stable
-- [ ] Comprehensive documentation
-- [ ] Performance optimization
-- [ ] API stability guarantees
+Expands platform support and introduces multi-model tracking.
 
-## v1.1+ (Post-v1 Expansion)
+- **Ollama CLI Adapter** — Local model tracking with calls-only mode
+- **Multi-Model Tracking** — Per-model tokens/costs when switching models mid-session
+- **Dynamic Pricing** — LiteLLM pricing API with TOML fallback and caching
+- **Static Cost Tracking** — Measure MCP schema "context tax"
+- **Schema v1.6.0** — `models_used`, `model_usage`, `static_cost` blocks
 
-**v1.1 - Developer Insight**
+**Success Metrics:**
+- Ollama users can track local model sessions
+- Sessions with model switches show per-model breakdown
+- Pricing stays current via LiteLLM API
+- 4 platforms supported: Claude Code, Codex CLI, Gemini CLI, Ollama CLI
+
+➡️ [View Milestone](https://github.com/littlebearapps/mcp-audit/milestone/2)
+
+---
+
+## v0.7.0 — UI Layer
+
+**Theme:** "Explore Your Data"
+
+Interactive session exploration and enhanced TUI features.
+
+- **TUI Session Browser** — `mcp-audit ui` command for exploring past sessions
+- **Session Pinning & Sorting** — Pin favorites, sort by date/cost/duration
+- **Accuracy Display** — Visual indicators for exact vs estimated data
+- **Smells Panel** — Real-time smell detection in live TUI
+- **TUI Keybindings** — Comprehensive keyboard navigation
+
+**Success Metrics:**
+- Users can browse and explore past sessions interactively
+- Pinned servers highlighted in live tracking
+- Clear visual distinction between exact and estimated data
+
+➡️ [View Milestone](https://github.com/littlebearapps/mcp-audit/milestone/3)
+
+---
+
+## v0.8.0 — Analysis Layer
+
+**Theme:** "Understand Your Usage"
+
+Deeper analysis capabilities and improved AI integration.
+
+- **Expanded Smell Categories** — 7+ new patterns (REDUNDANT_CALLS, BURST_PATTERN, etc.)
+- **Recommendation Context** — Non-automatic suggestions for AI consumption
+- **Cross-Session Aggregation** — Smell trends and frequencies across sessions
+- **Improved AI Export** — Richer context, comparison data, structured recommendations
+- **Schema v1.7.0** — Expanded smell taxonomy, recommendations block
+
+**Success Metrics:**
+- 12+ smell patterns detected
+- AI exports include actionable recommendations
+- Users can see smell trends across sessions
+
+➡️ [View Milestone](https://github.com/littlebearapps/mcp-audit/milestone/4)
+
+---
+
+## v0.9.0 — Polish + Stability
+
+**Theme:** "Ready for Production"
+
+Prepares for v1.0 with documentation, examples, and API stability.
+
+- **Documentation Overhaul** — Comprehensive guides for all features
+- **Usage Examples** — 5+ real-world scenario walkthroughs
+- **API Cleanup** — Deprecate unstable APIs, document public surface
+- **Final Schema v1.0.0** — Stability guarantees, JSON Schema validation
+- **Performance Optimization** — <100ms TUI refresh, <500ms session load
+- **Landing Page Content** — Draft copy and assets for website
+
+**Success Metrics:**
+- Complete documentation for all features
+- 5+ real-world usage examples
+- No breaking API changes after this release
+- Sub-100ms TUI refresh performance
+
+➡️ [View Milestone](https://github.com/littlebearapps/mcp-audit/milestone/5)
+
+---
+
+## v1.0.0 — Product Hunt Launch
+
+**Theme:** "Hello World"
+
+The official stable release with full marketing launch.
+
+- **Landing Page** — littlebearapps.com/mcp-audit
+- **Press Kit** — Logos, screenshots, descriptions, one-pager
+- **Blog Post** — v1.0 announcement with journey and features
+- **Video Demos** — 6 demo videos covering all features
+- **Product Hunt** — Full launch execution
+- **Social Announcements** — Coordinated launch campaign
+- **Final QA & Release** — Quality assurance and release execution
+
+**Success Metrics:**
+- Successful Product Hunt launch
+- Landing page live with conversion tracking
+- Press kit downloadable
+- Blog post published
+- Video demos created
+
+➡️ [View Milestone](https://github.com/littlebearapps/mcp-audit/milestone/6)
+
+---
+
+## Post-v1.0 Vision
+
+### v1.1+ — Developer Insight
 - Context window tracking (per-turn token load)
 - TUI: Tool Detail mode
 - Platform capability warnings
 
-**v1.2 - Payload Analysis**
+### v1.2+ — Payload Analysis
 - Dynamic payload heatmap
 - Full schema tokenizer
 - Description density scoring
 
-**v1.3 - Cross-Model Analysis**
+### v1.3+ — Cross-Model Analysis
 - Model behavior differences
 - Tool families/categories
 - Baseline session support
 
-**v1.4 - Comparison Suite**
+### v1.4+ — Comparison Suite
 - Session drift detection
 - Enhanced TUI comparison mode
 
-## Long-Term Vision (v2.0+)
+### v2.0+ — Long-Term Vision
+- Cross-session trend engine (time-series analysis)
+- Team/enterprise features (aggregate tracking)
+- Plugin architecture (dynamic adapters)
+- Cross-platform unified dashboard
 
-- **Cross-session trend engine** - Time-series analysis of MCP efficiency over time
-- **Team/enterprise features** - Aggregate tracking across team members
-- **Plugin architecture** - Dynamic adapters for new AI CLI platforms
-- **Cross-platform unified tracking** - Single dashboard for all AI coding tools
+---
 
 ## Contributing Ideas
 
@@ -90,6 +180,8 @@ We welcome community input on the roadmap!
 - **Feature requests**: [Start a Discussion](https://github.com/littlebearapps/mcp-audit/discussions/new?category=ideas)
 - **View all ideas**: [Ideas Board](https://github.com/littlebearapps/mcp-audit/discussions/categories/ideas)
 - **Questions**: [Q&A Discussions](https://github.com/littlebearapps/mcp-audit/discussions/categories/q-a)
+
+---
 
 ## Disclaimer
 
