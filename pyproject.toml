@@ -1,13 +1,14 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools>=77.0.3", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "mcp-audit"
-version = "0.4.2"
+version = "0.4.3"
 description = "Real-time MCP token tracker for Claude Code, Codex CLI & Gemini CLI. Investigate context bloat and high token usage at the source."
 readme = "README.md"
 license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     { name = "Little Bear Apps", email = "help@littlebearapps.com" }
 ]
@@ -86,6 +87,7 @@ python_functions = ["test_*"]
 
 [tool.coverage.run]
 source = ["src/mcp_audit"]
+relative_files = true  # Required for CI - converts absolute paths to relative
 omit = [
     "tests/*",
     "venv/*",

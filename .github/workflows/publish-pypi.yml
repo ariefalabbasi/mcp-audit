@@ -5,7 +5,7 @@
 # 1. OIDC token originates from littlebearapps/mcp-audit
 # 2. URLs pointing to this repo are verified on PyPI
 #
-# Triggered by workflow_dispatch from release-both.yml in master repo.
+# Triggered by workflow_dispatch from release-pipeline.yml in master repo.
 #
 # PyPI Trusted Publisher config required:
 #   - Owner: littlebearapps

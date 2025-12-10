@@ -1,4 +1,4 @@
-# MCP Audit
+# MCP Audit &nbsp; [![PyPI version](https://img.shields.io/pypi/v/mcp-audit?style=for-the-badge&logo=pypi&logoColor=white)](https://pypi.org/project/mcp-audit/) ![Project Status](https://img.shields.io/badge/Status-Active-brightgreen?style=for-the-badge)
 
 **mcp-audit is a real-time token profiler for MCP servers and MCP tools.**
 
@@ -7,12 +7,9 @@ It helps you diagnose **context bloat**, **auto-compaction**, and **unexpected t
 ![MCP Audit real-time TUI showing token usage](https://raw.githubusercontent.com/littlebearapps/mcp-audit/main/docs/images/demo.gif)
 > *Real-time token tracking & MCP tool profiling — understand exactly where your tokens go.*
 
-[![PyPI version](https://img.shields.io/pypi/v/mcp-audit?style=for-the-badge&logo=pypi&logoColor=white)](https://pypi.org/project/mcp-audit/)
 [![Downloads](https://img.shields.io/pepy/dt/mcp-audit?style=for-the-badge&logo=pypi&logoColor=white)](https://pepy.tech/project/mcp-audit)
 [![CI](https://img.shields.io/github/actions/workflow/status/littlebearapps/mcp-audit/ci.yml?branch=main&label=CI&style=for-the-badge&logo=github&logoColor=white)](https://github.com/littlebearapps/mcp-audit/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)](https://opensource.org/licenses/MIT)
-![Data Stays Local](https://img.shields.io/badge/Data-Stays%20Local-blue?style=for-the-badge)
-![Project Status](https://img.shields.io/badge/Status-Active-brightgreen?style=for-the-badge)
 
 ---
 
@@ -61,6 +58,8 @@ mcp-audit tokenizer download
 
 ## 🖥️ Compatibility
 
+**Python:**
+
 [![Python Versions](https://img.shields.io/pypi/pyversions/mcp-audit?style=for-the-badge&logo=python&logoColor=white)](https://pypi.org/project/mcp-audit/)
 
 **Operating Systems:**
@@ -97,7 +96,8 @@ A real-time MCP token profiler designed to help you understand exactly where you
 - Generates post-session summaries for deeper optimisation
 - Supports multi-session comparisons (aggregation mode)
 
-### 🔒 Privacy & Integration
+### 🔒 Privacy & Integration &nbsp; ![Data Stays Local](https://img.shields.io/badge/Data-Stays%20Local-blue?style=for-the-badge)
+
 - No proxies, no interception, no cloud uploads — all data stays local
 - Works alongside existing agent workflows with zero setup overhead
 
@@ -141,7 +141,7 @@ It turns raw MCP telemetry into actionable insights you can use to optimise your
 
 ---
 
-## 🚀 What's New [![Latest Release](https://img.shields.io/github/v/release/littlebearapps/mcp-audit?style=for-the-badge&logo=github&logoColor=white)](https://github.com/littlebearapps/mcp-audit/releases/latest)
+## 🚀 What's New &nbsp; [![Latest Release](https://img.shields.io/github/v/release/littlebearapps/mcp-audit?style=for-the-badge&logo=github&logoColor=white)](https://github.com/littlebearapps/mcp-audit/releases/latest)
 
 - **High-Accuracy Token Estimation:** Session-level tokens are **99-100% accurate** for Codex CLI and Gemini CLI (using tiktoken/Gemma tokenizers). Per-tool estimates are also highly accurate.
 - **Theme Support:** Full theme support including **Catppuccin Mocha/Latte** and High Contrast modes.

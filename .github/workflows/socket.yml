@@ -1,0 +1,62 @@
+# Socket Security - Supply Chain Protection
+# Detects malicious packages, typosquatting, and supply chain attacks
+# Free for open source: https://socket.dev/pricing
+#
+# This complements existing security scanning:
+# - CodeQL: Code vulnerability scanning (codeql.yml)
+# - Dependabot: Dependency updates (dependabot.yml)
+# - Socket: Supply chain attack detection (this file)
+
+name: Socket Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Prevent concurrent runs for the same ref
+concurrency:
+  group: socket-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  socket-security:
+    name: Supply Chain Scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Socket CLI
+        run: pip install socketsecurity --upgrade
+
+      - name: Run Socket Security Scan
+        env:
+          SOCKET_SECURITY_API_KEY: ${{ secrets.SOCKET_SECURITY_API_KEY }}
+          GH_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # Determine PR number based on event type
+          SOCKET_PR=0
+          if [ "$EVENT_NAME" == "pull_request" ]; then
+            SOCKET_PR="$PR_NUMBER"
+          fi
+
+          # Run Socket CLI
+          # The CLI automatically detects repo, branch, commit from git
+          socketcli \
+            --target-path "$GITHUB_WORKSPACE" \
+            --scm github \
+            --pr-number "$SOCKET_PR"

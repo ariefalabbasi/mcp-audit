@@ -49,13 +49,25 @@ jobs:
         with:
           name: coverage-report
           path: |
+            .coverage
             coverage.xml
             htmlcov/
+          include-hidden-files: true  # Required for .coverage file
 
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
-        if: always()
+      # GitHub-native coverage reporting with PR comments and annotations
+      # No external service needed - badge stored in git branch
+      - name: Coverage analysis
+        id: coverage
+        uses: py-cov-action/python-coverage-comment-action@v3
         with:
-          file: ./coverage.xml
-          fail_ci_if_error: false
-        continue-on-error: true
+          GITHUB_TOKEN: ${{ github.token }}
+          ANNOTATE_MISSING_LINES: true
+          ANNOTATION_TYPE: warning
+
+      # Store comment for fork PRs (two-workflow pattern)
+      - name: Store coverage comment
+        if: steps.coverage.outputs.COMMENT_FILE_WRITTEN == 'true'
+        uses: actions/upload-artifact@v5
+        with:
+          name: python-coverage-comment-action
+          path: python-coverage-comment-action.txt
