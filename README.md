@@ -1,6 +1,6 @@
-# MCP Audit &nbsp; [![PyPI version](https://img.shields.io/pypi/v/mcp-audit?style=for-the-badge&logo=pypi&logoColor=white)](https://pypi.org/project/mcp-audit/) ![Project Status](https://img.shields.io/badge/Status-Active-brightgreen?style=for-the-badge)
+# MCP Audit &nbsp; [![PyPI version](https://img.shields.io/pypi/v/mcp-audit?style=for-the-badge&logo=pypi&logoColor=white)](https://pypi.org/project/mcp-audit/)
 
-**mcp-audit is a real-time token profiler for MCP servers and MCP tools.**
+**MCP Audit is a real-time token profiler for MCP servers and MCP tools.**
 
 It helps you diagnose **context bloat**, **auto-compaction**, and **unexpected token spikes** across **Claude Code**, **Codex CLI**, and **Gemini CLI**—so you always know which MCP tool or MCP server is consuming your tokens and why.
 
@@ -9,6 +9,8 @@ It helps you diagnose **context bloat**, **auto-compaction**, and **unexpected t
 
 [![Downloads](https://img.shields.io/pepy/dt/mcp-audit?style=for-the-badge&logo=pypi&logoColor=white)](https://pepy.tech/project/mcp-audit)
 [![CI](https://img.shields.io/github/actions/workflow/status/littlebearapps/mcp-audit/ci.yml?branch=main&label=CI&style=for-the-badge&logo=github&logoColor=white)](https://github.com/littlebearapps/mcp-audit/actions/workflows/ci.yml)
+[![codecov](https://img.shields.io/codecov/c/github/littlebearapps/mcp-audit?style=for-the-badge&logo=codecov&logoColor=white)](https://codecov.io/gh/littlebearapps/mcp-audit)
+[![Socket](https://img.shields.io/badge/Socket-Secured-green?style=for-the-badge&logo=socket.io&logoColor=white)](https://socket.dev/pypi/package/mcp-audit)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)](https://opensource.org/licenses/MIT)
 
 ---
@@ -58,9 +60,7 @@ mcp-audit tokenizer download
 
 ## 🖥️ Compatibility
 
-**Python:**
-
-[![Python Versions](https://img.shields.io/pypi/pyversions/mcp-audit?style=for-the-badge&logo=python&logoColor=white)](https://pypi.org/project/mcp-audit/)
+**Python:** 3.8, 3.9, 3.10, 3.11, 3.12, 3.13
 
 **Operating Systems:**
 - **macOS** – fully supported
@@ -79,7 +79,7 @@ mcp-audit tokenizer download
 
 ---
 
-## 🚀 What mcp-audit Does (At a Glance)
+## 🚀 What MCP Audit Does (At a Glance)
 
 A real-time MCP token profiler designed to help you understand exactly where your tokens are going — and why.
 
@@ -91,29 +91,33 @@ A real-time MCP token profiler designed to help you understand exactly where you
 - Flags context bloat and schema overhead ("context tax")
 - Detects early auto-compaction triggers
 - Highlights payload spikes and chatty tools
+- **Smell Detection:** 5 efficiency anti-patterns (HIGH_VARIANCE, CHATTY, etc.)
+- **Zombie Tools:** Finds unused MCP tools wasting schema tokens
 
 ### 📊 Analysis & Reporting
 - Generates post-session summaries for deeper optimisation
 - Supports multi-session comparisons (aggregation mode)
+- **AI Export:** Export sessions for AI assistant analysis
+- **Data Quality:** Clear accuracy labels (exact/estimated/calls-only)
 
-### 🔒 Privacy & Integration &nbsp; ![Data Stays Local](https://img.shields.io/badge/Data-Stays%20Local-blue?style=for-the-badge)
+### 🔒 Privacy & Integration
 
 - No proxies, no interception, no cloud uploads — all data stays local
 - Works alongside existing agent workflows with zero setup overhead
 
 ---
 
-## ❓ MCP Problems mcp-audit Helps Solve
+## ❓ MCP Problems MCP Audit Helps Solve
 
 **"Why is my MCP server using so many tokens?"**
 
 Large `list_tools` schemas and verbose tool outputs add a hidden context tax.
-mcp-audit reveals exactly where that cost comes from.
+MCP Audit reveals exactly where that cost comes from.
 
 **"Why does Claude Code keep auto-compacting?"**
 
 Auto-compaction usually triggers when tool schemas or outputs are too large.
-mcp-audit shows the exact schema + tool calls contributing to early compaction.
+MCP Audit shows the exact schema + tool calls contributing to early compaction.
 
 **"Which MCP tools are the most expensive?"**
 
@@ -134,18 +138,20 @@ Use the post-session reports to identify inefficient tool patterns, chatty tools
 * **Telemetry Only:** Provides signals and metrics — you (or your AI) decide what to do with them.
 
 **Note:** MCP Audit is telemetry-only — no recommendations or optimizations are performed automatically.
-Use the AI export (coming in v0.5.0) to analyze your results with your preferred AI CLI.
+Use the AI export command (`mcp-audit export ai-prompt`) to analyze your results with your preferred AI CLI.
 
-mcp-audit helps you understand *why* your MCP tools behave the way they do—whether it's high token usage, slow agent performance, or unexpected context growth.
+MCP Audit helps you understand *why* your MCP tools behave the way they do—whether it's high token usage, slow agent performance, or unexpected context growth.
 It turns raw MCP telemetry into actionable insights you can use to optimise your agent workflows.
 
 ---
 
-## 🚀 What's New &nbsp; [![Latest Release](https://img.shields.io/github/v/release/littlebearapps/mcp-audit?style=for-the-badge&logo=github&logoColor=white)](https://github.com/littlebearapps/mcp-audit/releases/latest)
+## 🚀 What's New (v0.5.0)
 
-- **High-Accuracy Token Estimation:** Session-level tokens are **99-100% accurate** for Codex CLI and Gemini CLI (using tiktoken/Gemma tokenizers). Per-tool estimates are also highly accurate.
-- **Theme Support:** Full theme support including **Catppuccin Mocha/Latte** and High Contrast modes.
-- **Ultra Light:** Core package size reduced from 5MB to **<500KB** (~2.5MB with optional Gemma tokenizer).
+- **Smell Detection Engine:** Automatically detect 5 efficiency anti-patterns: `HIGH_VARIANCE`, `TOP_CONSUMER`, `HIGH_MCP_SHARE`, `CHATTY`, and `LOW_CACHE_HIT`.
+- **AI Prompt Export:** Export session data for AI analysis with `mcp-audit export ai-prompt` (markdown and JSON formats).
+- **Zombie Tool Detection:** Identify MCP tools defined but never called (wasting schema tokens).
+- **Data Quality Indicators:** Clear accuracy labels (`exact`/`estimated`/`calls-only`) with confidence scores.
+- **Schema v1.5.0:** New `smells`, `zombie_tools`, and `data_quality` blocks in session logs.
 
 See the [Changelog](https://github.com/littlebearapps/mcp-audit/blob/main/CHANGELOG.md) for full version history.
 
@@ -163,14 +169,15 @@ Once you're running `mcp-audit`, watch for these common patterns in your telemet
    - *Signal:* A single tool call consumes far more tokens than expected.
    - *What this might indicate:* Large file reads or verbose API responses.
 
-3. **The "Zombie Tool":** *(detection coming in v0.5.0)*
+3. **The "Zombie Tool":**
    - *Signal:* A tool appears in your schema but is never called.
    - *What this might indicate:* Unused tools consuming schema tokens on every turn.
+   - *Detection:* Configure known tools in `mcp-audit.toml` and MCP Audit will flag unused ones.
 
 4. **The "Auto-Compaction Trigger"** (Early Context Collapse):
    - *Signal:* Claude Code or Codex CLI compacts the conversation unexpectedly early.
    - *What this might indicate:* High schema weight or repeated inclusion of large payloads.
-   - *How mcp-audit helps:* Identifies which MCP server or MCP tool is pushing the session over the threshold.
+   - *How MCP Audit helps:* Identifies which MCP server or MCP tool is pushing the session over the threshold.
 
 ---
 
@@ -210,8 +217,8 @@ Now that you're collecting telemetry, read [What to Look For](#-what-to-look-for
 
 ## 🤖 Supported Agents
 
-![Claude Code](https://img.shields.io/badge/Claude%20Code-D97757?style=for-the-badge&logo=anthropic&logoColor=white)
-![OpenAI Codex](https://img.shields.io/badge/Codex%20CLI-412991?style=for-the-badge&logo=openai&logoColor=white)
+![Claude Code](https://img.shields.io/badge/Claude%20Code-D97757?style=for-the-badge&logo=claude&logoColor=white)
+![OpenAI Codex](https://img.shields.io/badge/Codex%20CLI-412991?style=for-the-badge&logo=openaigym&logoColor=white)
 ![Google Gemini](https://img.shields.io/badge/Gemini%20CLI-8E75B2?style=for-the-badge&logo=google%20gemini&logoColor=white)
 
 | Platform | Token Accuracy | Tracking Depth | Notes |
@@ -228,7 +235,7 @@ Now that you're collecting telemetry, read [What to Look For](#-what-to-look-for
 
 ---
 
-## 🧠 Why Developers Use mcp-audit
+## 🧠 Why Developers Use MCP Audit
 
 MCP tools and servers often generate hidden token overhead—from schema size, payload spikes, and inefficient tool patterns.
 These issues cause:
@@ -239,7 +246,7 @@ These issues cause:
 - **Misleading debug logs** — hard to trace the real source of bloat
 - **Context window exhaustion** — hitting limits before finishing work
 
-mcp-audit exposes these hidden costs and helps you build faster, cheaper, more predictable MCP workflows.
+MCP Audit exposes these hidden costs and helps you build faster, cheaper, more predictable MCP workflows.
 
 ---
 
@@ -288,8 +295,21 @@ mcp-audit collect --theme hc-dark
 
 *Supported Themes:* `auto`, `dark`, `light`, `mocha`, `latte`, `hc-dark`, `hc-light`
 
-> **Note:** Advanced features such as smell detection, zombie tool detection,  
-> AI prompt export, and multi-model sessions are part of the upcoming v0.5.0+ releases.
+### Zombie Tool Configuration
+
+Configure known tools to detect unused ("zombie") tools:
+
+```toml
+# mcp-audit.toml
+[zombie_tools.zen]
+tools = [
+    "mcp__zen__thinkdeep",
+    "mcp__zen__debug",
+    "mcp__zen__refactor"
+]
+```
+
+Zombie tools are detected when a configured tool is never called during a session.
 
 ### Pricing Configuration
 
@@ -356,6 +376,28 @@ Options:
   --top-n INT        Number of top tools to show (default: 10)
 ```
 
+### export
+
+Export session data for external analysis.
+
+```bash
+# Export for AI analysis (markdown format)
+mcp-audit export ai-prompt
+
+# Export specific session as JSON
+mcp-audit export ai-prompt path/to/session.json --format json
+```
+
+```
+Formats:
+  ai-prompt          Export session for AI assistant analysis
+                     (includes suggested analysis questions)
+
+Options:
+  --format           Output: markdown (default), json
+  --output PATH      Output file (default: stdout)
+```
+
 ### tokenizer
 
 Manage optional tokenizers.
@@ -413,8 +455,8 @@ Claude Code provides native token counts directly from Anthropic's servers, so n
 
 <br>
 
-1. **Started mcp-audit after the agent** — Only new activity is tracked. Start `mcp-audit` first, then your agent.
-2. **Wrong directory** — mcp-audit looks for session files based on your current working directory.
+1. **Started MCP Audit after the agent** — Only new activity is tracked. Start `mcp-audit` first, then your agent.
+2. **Wrong directory** — MCP Audit looks for session files based on your current working directory.
 3. **No MCP tools used yet** — Built-in tools (Read, Write, Bash) are tracked separately. Try using an MCP tool.
 
 </details>
@@ -434,11 +476,11 @@ Only token counts and tool names are logged—**prompts and responses are never 
 </details>
 
 <details>
-<summary><strong>Can mcp-audit help diagnose context bloat in MCP servers?</strong></summary>
+<summary><strong>Can MCP Audit help diagnose context bloat in MCP servers?</strong></summary>
 
 <br>
 
-Yes. mcp-audit tracks schema weight, per-tool usage, and payload spikes that contribute to context bloat in Claude Code, Codex CLI, and Gemini CLI. It helps you understand why your agent is using so many tokens and where optimisation will have the biggest impact.
+Yes. MCP Audit tracks schema weight, per-tool usage, and payload spikes that contribute to context bloat in Claude Code, Codex CLI, and Gemini CLI. It helps you understand why your agent is using so many tokens and where optimisation will have the biggest impact.
 
 </details>
 
@@ -460,7 +502,7 @@ Yes. mcp-audit tracks schema weight, per-tool usage, and payload spikes that con
 |----------|-------------|
 | [Features & Benefits](https://github.com/littlebearapps/mcp-audit/blob/main/docs/FEATURES-BENEFITS.md) | Detailed feature guide |
 | [Architecture](https://github.com/littlebearapps/mcp-audit/blob/main/docs/architecture.md) | System design and adapters |
-| [Data Contract](https://github.com/littlebearapps/mcp-audit/blob/main/docs/data-contract.md) | Schema v1.4.0 format |
+| [Data Contract](https://github.com/littlebearapps/mcp-audit/blob/main/docs/data-contract.md) | Schema v1.5.0 format |
 | [Privacy & Security](https://github.com/littlebearapps/mcp-audit/blob/main/docs/privacy-security.md) | Data handling policies |
 | [Manual Tokenizer Install](https://github.com/littlebearapps/mcp-audit/blob/main/docs/manual-tokenizer-install.md) | For firewalled networks |
 | [Changelog](https://github.com/littlebearapps/mcp-audit/blob/main/CHANGELOG.md) | Version history |
@@ -470,18 +512,17 @@ Yes. mcp-audit tracks schema weight, per-tool usage, and payload spikes that con
 
 ## 🗺️ Roadmap
 
-**Current**: v0.4.x — Stable for daily use
+**Current**: v0.5.x — Insight Layer (Smell Detection, AI Export, Data Quality)
 
-**Coming in v0.5.0:**
-- Smell detection signals — identify inefficient or unstable MCP tools (HIGH_VARIANCE, TOP_CONSUMER, CHATTY)
-- AI-friendly session export — let your AI analyse usage patterns
-- Zombie tool detection — find unused tools increasing schema cost
+**Coming in v0.6.0:**
+- Ollama CLI adapter — expand platform support
+- Multi-model per-session tracking — sessions that switch between models
+- Dynamic pricing via LiteLLM — auto-fetch latest model pricing
 
-**Coming in v0.6.0+:**
-- Multi-model session tracking — compare token behaviour across agents
+**Coming in v0.7.0+:**
 - TUI session browser — explore past sessions visually
-- Static/dynamic payload metrics — measure schema vs output cost
-- Ollama CLI support — expand tool ecosystem
+- Smells panel in live TUI — see anti-patterns as they happen
+- Cross-session smell aggregation — find patterns across sessions
 
 See the full [Roadmap](https://github.com/littlebearapps/mcp-audit/blob/main/ROADMAP.md) for details.
 

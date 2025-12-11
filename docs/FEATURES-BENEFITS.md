@@ -1,6 +1,6 @@
 # Features & Benefits by Audience
 
-MCP Audit v0.4.0 - Features mapped to benefits for each target audience.
+MCP Audit v0.5.0 - Features mapped to benefits for each target audience.
 
 ---
 
@@ -17,6 +17,109 @@ MCP Audit v0.4.0 - Features mapped to benefits for each target audience.
 | Cross-session reports | Track optimization progress | Long-term cost trends |
 | Cost estimation | Price your tools accurately | Budget planning |
 | Privacy-first design | Safe to use in production | No data leaves your machine |
+| **Smell detection** (v0.5.0) | Find anti-patterns in your tools | Identify inefficient usage |
+| **AI prompt export** (v0.5.0) | Export for automated analysis | Let AI analyze your sessions |
+| **Zombie tool detection** (v0.5.0) | Find unused tools in schema | Reduce context overhead |
+| **Data quality indicators** (v0.5.0) | Know estimation accuracy | Understand data confidence |
+
+---
+
+## v0.5.0 Features: Insight Layer
+
+v0.5.0 introduces the "Insight Layer" — automatic detection of efficiency anti-patterns, AI-exportable session data, and data quality indicators.
+
+### Smell Detection Engine
+
+Automatically detect 5 efficiency anti-patterns during sessions:
+
+| Pattern | Severity | Threshold | What It Means |
+|---------|----------|-----------|---------------|
+| `HIGH_VARIANCE` | warning | CV > 50% | Token counts vary wildly — consider batching |
+| `TOP_CONSUMER` | info | >50% of tokens | Single tool dominates — investigate or optimize |
+| `HIGH_MCP_SHARE` | info | >80% of tokens | Heavy MCP reliance — may be opportunity to use built-ins |
+| `CHATTY` | warning | >20 calls | Too many calls — consider batching or caching |
+| `LOW_CACHE_HIT` | warning | <30% ratio | Cache underutilized — reorder operations for reuse |
+
+Smells appear in session logs with severity, description, and evidence:
+```json
+{
+  "smells": [
+    {
+      "pattern": "CHATTY",
+      "severity": "warning",
+      "tool": "mcp__zen__chat",
+      "description": "Called 25 times",
+      "evidence": {"call_count": 25, "threshold": 20}
+    }
+  ]
+}
+```
+
+### AI Prompt Export
+
+Export session data for analysis by your AI assistant:
+
+```bash
+# Export as structured markdown
+mcp-audit export ai-prompt
+
+# Export as JSON for programmatic use
+mcp-audit export ai-prompt --format json
+```
+
+The export includes:
+- Session summary (tokens, costs, duration)
+- Top tools by token consumption
+- Detected smells with evidence
+- Data quality indicators
+- Suggested analysis questions
+
+### Zombie Tool Detection
+
+Identify MCP tools defined in server schemas but never called:
+
+```toml
+# mcp-audit.toml
+[zombie_tools.zen]
+tools = [
+    "mcp__zen__thinkdeep",
+    "mcp__zen__debug",
+    "mcp__zen__refactor"
+]
+```
+
+Session logs report unused tools per server:
+```json
+{
+  "zombie_tools": {
+    "zen": ["mcp__zen__refactor", "mcp__zen__precommit"]
+  }
+}
+```
+
+Each unused tool's schema contributes to context overhead without providing value.
+
+### Data Quality Indicators
+
+Every session now includes accuracy metadata:
+
+```json
+{
+  "data_quality": {
+    "accuracy_level": "estimated",
+    "token_source": "tiktoken",
+    "token_encoding": "o200k_base",
+    "confidence": 0.99,
+    "notes": "Tokens estimated using tiktoken o200k_base (~99% accuracy)"
+  }
+}
+```
+
+| Accuracy Level | Description | Platforms |
+|----------------|-------------|-----------|
+| `exact` | Native platform tokens | Claude Code |
+| `estimated` | Tokenizer-based estimation | Codex CLI, Gemini CLI |
+| `calls-only` | Only call counts, no tokens | Future Ollama CLI |
 
 ---
 
@@ -334,4 +437,4 @@ mcp-audit report ~/.mcp-audit/sessions/
 
 ---
 
-*v0.4.0 | Schema v1.4.0 | MIT License*
+*v0.5.0 | Schema v1.5.0 | MIT License*

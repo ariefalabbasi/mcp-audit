@@ -113,6 +113,17 @@ class DisplaySnapshot:
     # Encoding used (o200k_base, sentencepiece:gemma, cl100k_base, or "")
     estimation_encoding: str = ""
 
+    # ========================================================================
+    # Data Quality (v1.5.0 - task-103.5)
+    # ========================================================================
+
+    # Accuracy level: "exact" (Claude Code), "estimated" (Codex/Gemini CLI), "calls-only"
+    accuracy_level: str = "exact"
+    # Token source: "native", "tiktoken", "sentencepiece", "character"
+    token_source: str = "native"
+    # Confidence score (0.0-1.0)
+    data_quality_confidence: float = 1.0
+
     @classmethod
     def create(
         cls,
@@ -159,6 +170,10 @@ class DisplaySnapshot:
         estimated_tool_calls: int = 0,
         estimation_method: str = "",
         estimation_encoding: str = "",
+        # Data quality (v1.5.0 - task-103.5)
+        accuracy_level: str = "exact",
+        token_source: str = "native",
+        data_quality_confidence: float = 1.0,
     ) -> "DisplaySnapshot":
         """Factory method to create a DisplaySnapshot with proper tuple conversion."""
         # Import version if not provided
@@ -219,4 +234,8 @@ class DisplaySnapshot:
             estimated_tool_calls=estimated_tool_calls,
             estimation_method=estimation_method,
             estimation_encoding=estimation_encoding,
+            # Data quality (v1.5.0 - task-103.5)
+            accuracy_level=accuracy_level,
+            token_source=token_source,
+            data_quality_confidence=data_quality_confidence,
         )

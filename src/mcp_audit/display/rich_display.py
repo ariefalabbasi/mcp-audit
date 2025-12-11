@@ -177,6 +177,10 @@ class RichDisplay(DisplayAdapter):
         table.add_column("Label3", style=self.theme.dim_text, width=16)
         table.add_column("Value3", justify="right", width=14)
 
+        # Data quality indicator (v1.5.0 - task-103.5)
+        # "~" prefix for estimated values, nothing for exact
+        approx = "~" if snapshot.accuracy_level == "estimated" else ""
+
         # Row 1: Input | Cache Created | Cost w/ Cache
         table.add_row(
             "Input:",
@@ -227,9 +231,13 @@ class RichDisplay(DisplayAdapter):
             # Zero savings - neutral display
             savings_label = f"{savings_emoji} Savings:"
             savings_display = "$0.0000"
+        # Show "~" prefix for estimated token counts (v1.5.0 - task-103.5)
+        total_display = (
+            f"{approx}{snapshot.total_tokens:,}" if approx else f"{snapshot.total_tokens:,}"
+        )
         table.add_row(
             "Total:",
-            f"{snapshot.total_tokens:,}",
+            total_display,
             "Efficiency:",
             f"{snapshot.cache_efficiency:.1%}",
             savings_label,
@@ -249,9 +257,16 @@ class RichDisplay(DisplayAdapter):
             "",
         )
 
+        # Panel title includes accuracy indicator (v1.5.0 - task-103.5)
+        if snapshot.accuracy_level == "estimated":
+            confidence_pct = int(snapshot.data_quality_confidence * 100)
+            title = f"Token Usage & Cost (~{confidence_pct}% accuracy)"
+        else:
+            title = "Token Usage & Cost"
+
         return Panel(
             table,
-            title="Token Usage & Cost",
+            title=title,
             border_style=self.theme.tokens_border,
             box=self.box_style,
         )
@@ -594,6 +609,14 @@ class RichDisplay(DisplayAdapter):
             summary_parts.append(f"\n{git_info}\n")
 
         summary_parts.append(f"\nSchema version: {SCHEMA_VERSION}")
+
+        # Data quality disclaimer (v1.5.0 - task-103.5)
+        if snapshot.accuracy_level == "estimated":
+            confidence_pct = int(snapshot.data_quality_confidence * 100)
+            summary_parts.append(
+                f"\n[{self.theme.dim_text}]Data quality: MCP tool tokens estimated via "
+                f"{snapshot.token_source} (~{confidence_pct}% accuracy)[/]"
+            )
 
         # Session save location
         if snapshot.session_dir:

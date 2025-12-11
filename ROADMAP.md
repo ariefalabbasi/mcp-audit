@@ -4,29 +4,29 @@ This document outlines the planned development direction for MCP Audit. For comp
 
 ## Current Status
 
-**Version**: v0.4.1
-**Stage**: Stable for daily use
+**Version**: v0.5.0
+**Stage**: Insight Layer — Smell Detection, AI Export, Data Quality
 
-MCP Audit provides stable support for Claude Code, Codex CLI, and Gemini CLI. The core tracking and reporting functionality is production-ready.
+MCP Audit provides stable support for Claude Code, Codex CLI, and Gemini CLI. v0.5.0 introduces efficiency anti-pattern detection, AI-exportable session data, and data quality indicators.
 
 ---
 
-## v0.5.0 — Insight Layer
+## ✅ v0.5.0 — Insight Layer (Released)
 
 **Theme:** "See What's Wrong"
 
 The foundation for efficiency insights and AI-assisted analysis.
 
-- **Smell Engine MVP** — Detect 5 efficiency patterns: HIGH_VARIANCE, TOP_CONSUMER, HIGH_MCP_SHARE, CHATTY, LOW_CACHE_HIT
-- **Zombie Tool Detection** — Identify MCP tools defined but never called
-- **Data Quality System** — Accuracy labels: exact/estimated/calls-only
-- **AI Prompt Export MVP** — `mcp-audit export ai-prompt` for AI analysis
-- **Schema v1.5.0** — `smells`, `data_quality`, `zombie_tools` blocks
+- ✅ **Smell Engine MVP** — Detect 5 efficiency patterns: HIGH_VARIANCE, TOP_CONSUMER, HIGH_MCP_SHARE, CHATTY, LOW_CACHE_HIT
+- ✅ **Zombie Tool Detection** — Identify MCP tools defined but never called
+- ✅ **Data Quality System** — Accuracy labels: exact/estimated/calls-only
+- ✅ **AI Prompt Export MVP** — `mcp-audit export ai-prompt` for AI analysis
+- ✅ **Schema v1.5.0** — `smells`, `data_quality`, `zombie_tools` blocks
 
 **Success Metrics:**
-- Users can identify inefficient MCP usage patterns
-- AI assistants can consume session data for analysis
-- Clear accuracy labeling for all metrics
+- ✅ Users can identify inefficient MCP usage patterns
+- ✅ AI assistants can consume session data for analysis
+- ✅ Clear accuracy labeling for all metrics
 
 ➡️ [View Milestone](https://github.com/littlebearapps/mcp-audit/milestone/1)
 

@@ -128,6 +128,47 @@
 # Note: cache_create and cache_read are optional if your model doesn't support caching
 
 # ============================================================================
+# Zombie Tool Detection (v1.5.0)
+# ============================================================================
+#
+# Configure known tools per MCP server for zombie detection.
+# Zombie tools are tools defined in a server's schema but never called.
+# They contribute to context overhead without providing value.
+#
+# Format:
+# [zombie_tools.<server_name>]
+# tools = ["tool_name_1", "tool_name_2", ...]
+#
+# Example configuration:
+#
+# [zombie_tools.zen]
+# tools = [
+#     "mcp__zen__thinkdeep",
+#     "mcp__zen__chat",
+#     "mcp__zen__debug",
+#     "mcp__zen__codereview",
+#     "mcp__zen__precommit",
+#     "mcp__zen__refactor",
+#     "mcp__zen__planner",
+#     "mcp__zen__consensus",
+# ]
+#
+# [zombie_tools.backlog]
+# tools = [
+#     "mcp__backlog__task_create",
+#     "mcp__backlog__task_list",
+#     "mcp__backlog__task_view",
+#     "mcp__backlog__task_edit",
+#     "mcp__backlog__task_archive",
+#     "mcp__backlog__task_search",
+#     "mcp__backlog__document_list",
+#     "mcp__backlog__document_view",
+#     "mcp__backlog__document_create",
+#     "mcp__backlog__document_update",
+#     "mcp__backlog__document_search",
+# ]
+
+# ============================================================================
 # Configuration Metadata
 # ============================================================================
 

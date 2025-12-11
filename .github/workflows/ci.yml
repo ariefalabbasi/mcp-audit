@@ -54,6 +54,15 @@ jobs:
             htmlcov/
           include-hidden-files: true  # Required for .coverage file
 
+      # Upload to CodeCov for badge and tracking
+      - name: Upload to CodeCov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.xml
+          fail_ci_if_error: false
+          verbose: true
+
       # GitHub-native coverage reporting with PR comments and annotations
       # No external service needed - badge stored in git branch
       - name: Coverage analysis

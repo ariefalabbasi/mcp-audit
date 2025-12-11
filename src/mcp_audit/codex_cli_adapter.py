@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional, Tuple
 
-from .base_tracker import BaseTracker
+from .base_tracker import BaseTracker, DataQuality
 from .pricing_config import PricingConfig
 from .token_estimator import TokenEstimator
 
@@ -156,6 +156,17 @@ class CodexCLIAdapter(BaseTracker):
         # Token estimation tracking (task-69.10)
         # Counts MCP tool calls that use estimated tokens
         self._estimated_tool_calls: int = 0
+
+        # Data quality (v1.5.0 - task-103.5)
+        # Codex CLI: Session tokens are native from API, MCP tool tokens are estimated
+        # We report "estimated" because MCP tool breakdowns use tiktoken
+        self.session.data_quality = DataQuality(
+            accuracy_level="estimated",
+            token_source="tiktoken",
+            token_encoding=self._estimator.encoding_name,  # e.g., "o200k_base"
+            confidence=0.99,  # tiktoken o200k_base is ~99-100% accurate for OpenAI
+            notes="Session totals native from API; MCP tool breakdown estimated via tiktoken",
+        )
 
     # ========================================================================
     # Session File Discovery (Task 60.9)
@@ -489,6 +500,10 @@ class CodexCLIAdapter(BaseTracker):
             estimated_tool_calls=self._estimated_tool_calls,
             estimation_method=self._estimator.method_name,
             estimation_encoding=self._estimator.encoding_name,
+            # Data quality (v1.5.0 - task-103.5)
+            accuracy_level="estimated",
+            token_source="tiktoken",
+            data_quality_confidence=0.99,  # tiktoken o200k_base ~99% accuracy
         )
 
     def _start_file_tracking(self) -> None:

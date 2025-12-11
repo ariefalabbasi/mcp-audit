@@ -908,3 +908,68 @@ if __name__ == "__main__":
 
     print("\n" + "=" * 60)
     print("All tests passed!")
+
+
+# =============================================================================
+# Convenience Functions for CLI (v1.5.0 - task-103.2)
+# =============================================================================
+
+
+def get_latest_session(base_dir: Optional[Path] = None) -> Optional[Path]:
+    """
+    Find the most recent session file.
+
+    Searches all platforms and dates to find the newest session.
+
+    Args:
+        base_dir: Base directory for sessions (default: ~/.mcp-audit/sessions)
+
+    Returns:
+        Path to the most recent session JSON file, or None if not found
+    """
+    if base_dir is None:
+        base_dir = get_default_base_dir()
+
+    if not base_dir.exists():
+        return None
+
+    latest_path: Optional[Path] = None
+    latest_mtime: float = 0
+
+    # Search all platform directories
+    for platform_dir in base_dir.iterdir():
+        if not platform_dir.is_dir():
+            continue
+
+        # Search all date directories within platform
+        for date_dir in platform_dir.iterdir():
+            if not date_dir.is_dir():
+                continue
+
+            # Search for JSON files
+            for session_file in date_dir.glob("*.json"):
+                if session_file.is_file():
+                    mtime = session_file.stat().st_mtime
+                    if mtime > latest_mtime:
+                        latest_mtime = mtime
+                        latest_path = session_file
+
+    return latest_path
+
+
+def load_session_file(session_path: Path) -> Optional[Dict[str, Any]]:
+    """
+    Load a session JSON file.
+
+    Args:
+        session_path: Path to session JSON file
+
+    Returns:
+        Session data as dict, or None if loading failed
+    """
+    try:
+        with open(session_path) as f:
+            result: Dict[str, Any] = json.load(f)
+            return result
+    except (json.JSONDecodeError, OSError):
+        return None

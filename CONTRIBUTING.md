@@ -65,6 +65,8 @@ mcp-audit/
 │   ├── pricing_config.py       # Pricing configuration
 │   ├── normalization.py        # Data normalization
 │   ├── privacy.py              # Privacy utilities
+│   ├── smells.py               # Smell detection engine (v0.5.0)
+│   ├── zombie_detector.py      # Zombie tool detection (v0.5.0)
 │   └── display/                # TUI components
 │       ├── __init__.py
 │       ├── rich_display.py     # Rich terminal display
@@ -77,7 +79,9 @@ mcp-audit/
 │   ├── test_codex_cli_adapter.py
 │   ├── test_gemini_cli_adapter.py
 │   ├── test_token_estimator.py
-│   └── fixtures/               # Test data
+│   ├── test_smells.py              # Smell detection tests (v0.5.0)
+│   ├── test_zombie_detector.py     # Zombie detection tests (v0.5.0)
+│   └── fixtures/                   # Test data
 ├── docs/
 └── pyproject.toml
 ```

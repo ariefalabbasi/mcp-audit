@@ -17,7 +17,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional, Set, Tuple
 
-from .base_tracker import BaseTracker
+from .base_tracker import BaseTracker, DataQuality
 from .pricing_config import PricingConfig
 from .token_estimator import TokenEstimator
 
@@ -314,6 +314,22 @@ class GeminiCLIAdapter(BaseTracker):
         self._native_cache_read_tokens: int = 0
         self._native_reasoning_tokens: int = 0
         self._native_total_tokens: int = 0
+
+        # Data quality (v1.5.0 - task-103.5)
+        # Gemini CLI: Session tokens are native from API, MCP tool tokens are estimated
+        # Gemma tokenizer provides 100% accuracy when available, tiktoken ~95% fallback
+        self.session.data_quality = DataQuality(
+            accuracy_level="estimated",
+            token_source=self._token_estimator.method_name,  # "sentencepiece" or "tiktoken"
+            token_encoding=self._token_estimator.encoding_name,  # "gemma" or "o200k_base"
+            confidence=1.0 if self._token_estimator.method_name == "sentencepiece" else 0.95,
+            notes="Session totals native from API; MCP tool breakdown estimated via "
+            + (
+                "Gemma tokenizer (100% accuracy)"
+                if self._token_estimator.method_name == "sentencepiece"
+                else "tiktoken fallback (~95% accuracy)"
+            ),
+        )
 
     def _extract_files_from_tool_params(self, tool_name: str, params: Dict[str, Any]) -> None:
         """
@@ -799,6 +815,12 @@ class GeminiCLIAdapter(BaseTracker):
             estimated_tool_calls=self._estimated_tool_calls,
             estimation_method=self._token_estimator.method_name,
             estimation_encoding=self._token_estimator.encoding_name,
+            # Data quality (v1.5.0 - task-103.5)
+            accuracy_level="estimated",
+            token_source=self._token_estimator.method_name,
+            data_quality_confidence=(
+                1.0 if self._token_estimator.method_name == "sentencepiece" else 0.95
+            ),
         )
 
     def parse_event(self, event_data: Any) -> Optional[Tuple[str, Dict[str, Any]]]:

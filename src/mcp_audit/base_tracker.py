@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 from . import __version__
 
 # Schema version (see docs/data-contract.md for compatibility guarantees)
-SCHEMA_VERSION = "1.4.0"
+SCHEMA_VERSION = "1.5.0"
 
 
 def _now_with_timezone() -> datetime:
@@ -275,6 +275,80 @@ class CacheAnalysis:
         return asdict(self)
 
 
+# ============================================================================
+# Schema v1.5.0 Data Structures (Insight Layer)
+# ============================================================================
+
+
+@dataclass
+class Smell:
+    """Efficiency anti-pattern detected in a session (v1.5.0)
+
+    Represents a single "code smell" for MCP tool usage patterns that
+    may indicate inefficiency or suboptimal behavior.
+
+    Attributes:
+        pattern: Pattern identifier (e.g., "HIGH_VARIANCE", "CHATTY")
+        severity: "info", "warning", or "error"
+        tool: Tool name triggering the smell (optional, some are session-level)
+        description: Human-readable explanation
+        evidence: Pattern-specific supporting data
+    """
+
+    pattern: str  # HIGH_VARIANCE, TOP_CONSUMER, HIGH_MCP_SHARE, CHATTY, LOW_CACHE_HIT
+    severity: str = "info"  # "info", "warning", "error"
+    tool: Optional[str] = None  # Tool that triggered the smell (if applicable)
+    description: str = ""
+    evidence: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to JSON-serializable dict"""
+        result = {
+            "pattern": self.pattern,
+            "severity": self.severity,
+            "description": self.description,
+            "evidence": self.evidence,
+        }
+        if self.tool:
+            result["tool"] = self.tool
+        return result
+
+
+@dataclass
+class DataQuality:
+    """Data quality and accuracy indicators for a session (v1.5.0)
+
+    Provides clear labeling of how accurate the token metrics are,
+    helping users understand the reliability of the data.
+
+    Attributes:
+        accuracy_level: "exact", "estimated", or "calls-only"
+        token_source: Tokenizer/source used (e.g., "native", "tiktoken", "sentencepiece")
+        token_encoding: Specific encoding (e.g., "o200k_base", "gemma")
+        confidence: Estimated accuracy as float (0.0-1.0)
+        notes: Additional context about data quality
+    """
+
+    accuracy_level: str = "exact"  # "exact", "estimated", "calls-only"
+    token_source: str = "native"  # "native", "tiktoken", "sentencepiece", "character"
+    token_encoding: Optional[str] = None  # e.g., "o200k_base", "gemma"
+    confidence: float = 1.0  # 0.0-1.0
+    notes: str = ""
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to JSON-serializable dict"""
+        result = {
+            "accuracy_level": self.accuracy_level,
+            "token_source": self.token_source,
+            "confidence": self.confidence,
+        }
+        if self.token_encoding:
+            result["token_encoding"] = self.token_encoding
+        if self.notes:
+            result["notes"] = self.notes
+        return result
+
+
 @dataclass
 class Session:
     """Complete session data"""
@@ -303,10 +377,14 @@ class Session:
     builtin_tool_stats: Dict[str, Dict[str, int]] = field(
         default_factory=dict
     )  # tool -> {calls, tokens}
+    # v1.5.0: Insight Layer
+    smells: List["Smell"] = field(default_factory=list)  # Efficiency anti-patterns
+    data_quality: Optional["DataQuality"] = None  # Accuracy indicators
+    zombie_tools: Dict[str, List[str]] = field(default_factory=dict)  # server -> unused tools
     _call_index: int = field(default=0, repr=False)  # Internal counter for call indices
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to v1.2.0 JSON-serializable dict with flat tool_calls and builtin_tool_summary"""
+        """Convert to v1.5.0 JSON-serializable dict with Insight Layer blocks"""
         # Build flat tool_calls array from all server sessions
         tool_calls = []
         for server_session in self.server_sessions.values():
@@ -326,7 +404,10 @@ class Session:
         # Build builtin tool summary (v1.2.0 - task-78)
         builtin_tool_summary = self._build_builtin_tool_summary()
 
-        return {
+        # v1.5.0: Build data quality block
+        data_quality_dict = self.data_quality.to_dict() if self.data_quality else None
+
+        result = {
             "_file": None,  # To be set by save_session()
             "session": {
                 "id": self.session_id,
@@ -348,11 +429,20 @@ class Session:
             "builtin_tool_summary": builtin_tool_summary.to_dict(),
             "cache_analysis": cache_analysis.to_dict(),
             "tool_calls": tool_calls,
+            # v1.5.0: Insight Layer blocks
+            "smells": [smell.to_dict() for smell in self.smells],
+            "zombie_tools": self.zombie_tools if self.zombie_tools else {},
             "analysis": {
                 "redundancy": self.redundancy_analysis,
                 "anomalies": self.anomalies,
             },
         }
+
+        # v1.5.0: Add data_quality only if set (platform-dependent)
+        if data_quality_dict:
+            result["data_quality"] = data_quality_dict
+
+        return result
 
     def to_dict_v1_0(self) -> Dict[str, Any]:
         """Convert to v1.0.0 JSON-serializable dict for backward compatibility"""
@@ -910,6 +1000,16 @@ class BaseTracker(ABC):
 
         # Detect anomalies
         self.session.anomalies = self._detect_anomalies()
+
+        # Detect efficiency smells (v1.5.0 - task-103.1)
+        from .smells import detect_smells
+
+        self.session.smells = detect_smells(self.session)
+
+        # Detect zombie tools (v1.5.0 - task-103.4)
+        from .zombie_detector import detect_zombie_tools
+
+        self.session.zombie_tools = detect_zombie_tools(self.session)
 
         return self.session
 

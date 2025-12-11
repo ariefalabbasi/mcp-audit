@@ -39,7 +39,7 @@ mcp-audit collect --platform claude-code
 You'll see a live TUI dashboard:
 
 ```
-MCP Audit v0.4.0 - Claude Code Session
+MCP Audit v0.5.0 - Claude Code Session
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Status: Tracking...
@@ -184,8 +184,20 @@ Claude Code provides **native token attribution** — the most accurate tracking
 | Reasoning tokens | ❌ | Not exposed by Claude Code |
 | Cache tracking | ✅ Full | Both cache creation and read |
 | Cost estimates | ✅ Accurate | Uses native token counts |
+| Data quality | **exact** | Confidence: 1.0 (100% accurate) |
 
 **No estimation needed** — Claude Code exposes exact per-tool token counts directly.
+
+### v0.5.0 Features
+
+**Data Quality Indicators**: Claude Code sessions have `accuracy_level: "exact"` with 100% confidence.
+
+**Smell Detection**: All 5 anti-patterns detected: HIGH_VARIANCE, TOP_CONSUMER, HIGH_MCP_SHARE, CHATTY, LOW_CACHE_HIT.
+
+**AI Export**: Export session data for AI analysis:
+```bash
+mcp-audit export ai-prompt
+```
 
 ---
 
@@ -342,7 +354,7 @@ Based on MCP Audit data:
 ### Sample TUI Output
 
 ```
-MCP Audit v0.4.0 - Claude Code
+MCP Audit v0.5.0 - Claude Code
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Project: my-project │ Elapsed: 12m 34s

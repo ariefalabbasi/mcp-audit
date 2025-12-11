@@ -11,7 +11,7 @@ import signal
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Literal, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional
 
 if TYPE_CHECKING:
     from .base_tracker import BaseTracker, Session
@@ -409,6 +409,81 @@ The tokenizer will be saved to ~/.cache/mcp-audit/tokenizer.model
         help="Re-download even if tokenizer already exists",
     )
 
+    # ========================================================================
+    # export command (v1.5.0 - task-103.2)
+    # ========================================================================
+    export_parser = subparsers.add_parser(
+        "export",
+        help="Export session data in various formats",
+        description="""
+Export session data in formats optimized for different use cases.
+
+Currently supports:
+  ai-prompt - Export session data formatted for AI analysis
+              (paste into Claude/ChatGPT for efficiency recommendations)
+        """,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+
+    export_subparsers = export_parser.add_subparsers(
+        title="export formats",
+        dest="export_format",
+        help="Export format to use",
+    )
+
+    # export ai-prompt
+    export_ai_parser = export_subparsers.add_parser(
+        "ai-prompt",
+        help="Export session data formatted for AI analysis",
+        description="""
+Export session data in a format optimized for AI analysis.
+
+The output includes:
+- Session summary (duration, platform, model)
+- Token breakdown by category
+- MCP tool usage ranked by tokens
+- Detected smells with evidence
+- Data quality indicators
+- Suggested analysis questions
+
+Use case: Copy and paste into Claude/ChatGPT for efficiency analysis.
+
+Examples:
+  # Export latest session
+  mcp-audit export ai-prompt
+
+  # Export specific session
+  mcp-audit export ai-prompt path/to/session.json
+
+  # Export as JSON (for programmatic use)
+  mcp-audit export ai-prompt --format json
+        """,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+
+    export_ai_parser.add_argument(
+        "session_path",
+        type=Path,
+        nargs="?",
+        default=None,
+        help="Path to session JSON file (default: latest session)",
+    )
+
+    export_ai_parser.add_argument(
+        "--format",
+        choices=["markdown", "json"],
+        default="markdown",
+        help="Output format (default: markdown)",
+    )
+
+    export_ai_parser.add_argument(
+        "--output",
+        "-o",
+        type=Path,
+        default=None,
+        help="Output file (default: stdout)",
+    )
+
     # Parse arguments
     args = parser.parse_args()
 
@@ -421,6 +496,8 @@ The tokenizer will be saved to ~/.cache/mcp-audit/tokenizer.model
         return cmd_init(args)
     elif args.command == "tokenizer":
         return cmd_tokenizer(args)
+    elif args.command == "export":
+        return cmd_export(args)
     else:
         parser.print_help()
         return 1
@@ -1238,6 +1315,280 @@ def cmd_tokenizer_download(args: argparse.Namespace) -> int:
             print("Token estimation will use tiktoken fallback (~95% accuracy).")
 
         return 1
+
+
+# ============================================================================
+# Export Command (v1.5.0 - task-103.2)
+# ============================================================================
+
+
+def cmd_export(args: argparse.Namespace) -> int:
+    """Handle export subcommands."""
+    export_format = getattr(args, "export_format", None)
+
+    if export_format == "ai-prompt":
+        return cmd_export_ai_prompt(args)
+    else:
+        print("Usage: mcp-audit export <format>")
+        print()
+        print("Available formats:")
+        print("  ai-prompt    Export session data formatted for AI analysis")
+        print()
+        print("Run 'mcp-audit export <format> --help' for more information.")
+        return 1
+
+
+def cmd_export_ai_prompt(args: argparse.Namespace) -> int:
+    """Export session data formatted for AI analysis."""
+    from .storage import get_latest_session, load_session_file
+
+    # Load session data
+    session_path = getattr(args, "session_path", None)
+    output_format = getattr(args, "format", "markdown")
+    output_path = getattr(args, "output", None)
+
+    if session_path is None:
+        # Find latest session
+        session_path = get_latest_session()
+        if session_path is None:
+            print("Error: No sessions found. Run 'mcp-audit collect' first.")
+            return 1
+
+    if not session_path.exists():
+        print(f"Error: Session file not found: {session_path}")
+        return 1
+
+    # Load session
+    session_data = load_session_file(session_path)
+    if session_data is None:
+        print(f"Error: Could not load session file: {session_path}")
+        return 1
+
+    # Generate output
+    if output_format == "markdown":
+        output = generate_ai_prompt_markdown(session_data, session_path)
+    else:
+        output = generate_ai_prompt_json(session_data, session_path)
+
+    # Write output
+    if output_path:
+        output_path.write_text(output)
+        print(f"Exported to: {output_path}")
+    else:
+        print(output)
+
+    return 0
+
+
+def generate_ai_prompt_markdown(session_data: Dict[str, Any], session_path: Path) -> str:
+    """Generate AI-optimized markdown prompt from session data."""
+    lines = []
+
+    # Header
+    lines.append("# MCP Session Analysis Request")
+    lines.append("")
+    lines.append("Please analyze this MCP (Model Context Protocol) session data and provide:")
+    lines.append("1. Key observations about tool usage patterns")
+    lines.append("2. Efficiency recommendations")
+    lines.append("3. Cost optimization suggestions")
+    lines.append("4. Architecture improvements (if applicable)")
+    lines.append("")
+
+    # Session Summary
+    session = session_data.get("session", {})
+    lines.append("## Session Summary")
+    lines.append("")
+    lines.append(f"- **Platform**: {session.get('platform', 'unknown')}")
+    lines.append(f"- **Model**: {session.get('model', 'unknown')}")
+    lines.append(f"- **Duration**: {_format_duration(session.get('duration_seconds', 0))}")
+    lines.append(f"- **Project**: {session.get('project', 'unknown')}")
+    lines.append("")
+
+    # Token Usage
+    token_usage = session_data.get("token_usage", {})
+    lines.append("## Token Usage")
+    lines.append("")
+    lines.append(f"- **Input Tokens**: {token_usage.get('input_tokens', 0):,}")
+    lines.append(f"- **Output Tokens**: {token_usage.get('output_tokens', 0):,}")
+    lines.append(f"- **Cache Read**: {token_usage.get('cache_read_tokens', 0):,}")
+    lines.append(f"- **Cache Created**: {token_usage.get('cache_created_tokens', 0):,}")
+    lines.append(f"- **Total Tokens**: {token_usage.get('total_tokens', 0):,}")
+    lines.append("")
+
+    # Cost
+    cost = session_data.get("cost_estimate_usd", 0)
+    lines.append("## Cost")
+    lines.append("")
+    lines.append(f"- **Estimated Cost**: ${cost:.4f}")
+    lines.append("")
+
+    # MCP Tool Usage
+    mcp_summary = session_data.get("mcp_summary", {})
+    lines.append("## MCP Tool Usage")
+    lines.append("")
+    lines.append(f"- **Total MCP Calls**: {mcp_summary.get('total_calls', 0)}")
+    lines.append(f"- **Unique Tools**: {mcp_summary.get('unique_tools', 0)}")
+    lines.append(f"- **Most Called**: {mcp_summary.get('most_called', 'N/A')}")
+    lines.append("")
+
+    # Tool breakdown (top 10)
+    server_sessions = session_data.get("server_sessions", {})
+    tool_stats = []
+    for server_name, server_data in server_sessions.items():
+        if server_name == "builtin":
+            continue
+        tools = server_data.get("tools", {})
+        for tool_name, stats in tools.items():
+            tool_stats.append(
+                {
+                    "tool": tool_name,
+                    "server": server_name,
+                    "calls": stats.get("calls", 0),
+                    "tokens": stats.get("total_tokens", 0),
+                }
+            )
+
+    # Sort by tokens (descending)
+    tool_stats.sort(key=lambda x: x["tokens"], reverse=True)
+
+    if tool_stats:
+        lines.append("### Top Tools by Token Usage")
+        lines.append("")
+        lines.append("| Tool | Server | Calls | Tokens |")
+        lines.append("|------|--------|-------|--------|")
+        for stat in tool_stats[:10]:
+            lines.append(
+                f"| {stat['tool']} | {stat['server']} | " f"{stat['calls']} | {stat['tokens']:,} |"
+            )
+        lines.append("")
+
+    # Detected Smells
+    smells = session_data.get("smells", [])
+    if smells:
+        lines.append("## Detected Efficiency Issues")
+        lines.append("")
+        for smell in smells:
+            severity_emoji = "⚠️" if smell.get("severity") == "warning" else "ℹ️"
+            lines.append(f"### {severity_emoji} {smell.get('pattern', 'Unknown')}")
+            lines.append("")
+            if smell.get("tool"):
+                lines.append(f"**Tool**: {smell['tool']}")
+            lines.append(f"**Description**: {smell.get('description', 'No description')}")
+            lines.append("")
+            evidence = smell.get("evidence", {})
+            if evidence:
+                lines.append("**Evidence**:")
+                for key, value in evidence.items():
+                    lines.append(f"- {key}: {value}")
+                lines.append("")
+    else:
+        lines.append("## Detected Efficiency Issues")
+        lines.append("")
+        lines.append("No efficiency issues detected.")
+        lines.append("")
+
+    # Zombie Tools
+    zombie_tools = session_data.get("zombie_tools", {})
+    if zombie_tools:
+        lines.append("## Zombie Tools (Defined but Never Called)")
+        lines.append("")
+        for server, tools in zombie_tools.items():
+            lines.append(f"**{server}**: {', '.join(tools)}")
+        lines.append("")
+
+    # Data Quality
+    data_quality = session_data.get("data_quality", {})
+    if data_quality:
+        lines.append("## Data Quality")
+        lines.append("")
+        lines.append(f"- **Accuracy Level**: {data_quality.get('accuracy_level', 'unknown')}")
+        lines.append(f"- **Token Source**: {data_quality.get('token_source', 'unknown')}")
+        lines.append(f"- **Confidence**: {data_quality.get('confidence', 0):.0%}")
+        if data_quality.get("notes"):
+            lines.append(f"- **Notes**: {data_quality['notes']}")
+        lines.append("")
+
+    # Suggested Analysis Questions
+    lines.append("## Suggested Analysis Questions")
+    lines.append("")
+    lines.append("1. Which tools are consuming the most tokens? Are they necessary?")
+    lines.append("2. Is the cache being used effectively? How can cache hit rate improve?")
+    lines.append("3. Are there chatty tools that could be batched or optimized?")
+    lines.append("4. Are zombie tools contributing unnecessary context overhead?")
+    lines.append("5. What architectural changes could reduce token usage?")
+    lines.append("6. Are there alternative tools or approaches that would be more efficient?")
+    lines.append("")
+
+    # Source file reference
+    lines.append("---")
+    lines.append(f"*Source: {session_path.name}*")
+
+    return "\n".join(lines)
+
+
+def generate_ai_prompt_json(session_data: Dict[str, Any], session_path: Path) -> str:
+    """Generate AI-optimized JSON from session data."""
+    import json
+
+    # Extract relevant fields for AI analysis
+    ai_prompt_data = {
+        "analysis_request": {
+            "instructions": [
+                "Analyze this MCP session data",
+                "Identify tool usage patterns",
+                "Provide efficiency recommendations",
+                "Suggest cost optimization strategies",
+            ],
+        },
+        "session_summary": {
+            "platform": session_data.get("session", {}).get("platform"),
+            "model": session_data.get("session", {}).get("model"),
+            "duration_seconds": session_data.get("session", {}).get("duration_seconds"),
+            "project": session_data.get("session", {}).get("project"),
+        },
+        "token_usage": session_data.get("token_usage", {}),
+        "cost_estimate_usd": session_data.get("cost_estimate_usd"),
+        "mcp_summary": session_data.get("mcp_summary", {}),
+        "smells": session_data.get("smells", []),
+        "zombie_tools": session_data.get("zombie_tools", {}),
+        "data_quality": session_data.get("data_quality", {}),
+        "source_file": session_path.name,
+    }
+
+    # Add top tools by tokens
+    server_sessions = session_data.get("server_sessions", {})
+    tool_stats = []
+    for server_name, server_data in server_sessions.items():
+        if server_name == "builtin":
+            continue
+        tools = server_data.get("tools", {})
+        for tool_name, stats in tools.items():
+            tool_stats.append(
+                {
+                    "tool": tool_name,
+                    "server": server_name,
+                    "calls": stats.get("calls", 0),
+                    "tokens": stats.get("total_tokens", 0),
+                }
+            )
+
+    tool_stats.sort(key=lambda x: x["tokens"], reverse=True)
+    ai_prompt_data["top_tools"] = tool_stats[:10]
+
+    return json.dumps(ai_prompt_data, indent=2)
+
+
+def _format_duration(seconds: float) -> str:
+    """Format duration in human-readable form."""
+    if seconds < 60:
+        return f"{seconds:.0f}s"
+    minutes = int(seconds / 60)
+    remaining_seconds = int(seconds % 60)
+    if minutes < 60:
+        return f"{minutes}m {remaining_seconds}s"
+    hours = int(minutes / 60)
+    remaining_minutes = int(minutes % 60)
+    return f"{hours}h {remaining_minutes}m"
 
 
 # ============================================================================

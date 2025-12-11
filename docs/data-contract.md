@@ -1,7 +1,7 @@
 # MCP Audit Data Contract
 
-**Version**: 1.4.0
-**Last Updated**: 2025-12-07
+**Version**: 1.5.0
+**Last Updated**: 2025-12-10
 **Status**: Active
 
 This document defines the data contract for MCP Audit, including backward compatibility guarantees, versioning policy, and migration guidelines.
@@ -10,16 +10,194 @@ This document defines the data contract for MCP Audit, including backward compat
 
 ## Table of Contents
 
-1. [Schema v1.4.0](#schema-v140)
-2. [Schema v1.3.0](#schema-v130)
-3. [Schema v1.2.0](#schema-v120)
-4. [Schema v1.1.0](#schema-v110)
-3. [Backward Compatibility Guarantee](#backward-compatibility-guarantee)
-4. [Versioning Policy](#versioning-policy)
-5. [Schema Stability](#schema-stability)
-6. [Migration Support](#migration-support)
-7. [Breaking Changes](#breaking-changes)
-8. [Deprecation Policy](#deprecation-policy)
+1. [Schema v1.5.0](#schema-v150)
+2. [Schema v1.4.0](#schema-v140)
+3. [Schema v1.3.0](#schema-v130)
+4. [Schema v1.2.0](#schema-v120)
+5. [Schema v1.1.0](#schema-v110)
+6. [Backward Compatibility Guarantee](#backward-compatibility-guarantee)
+7. [Versioning Policy](#versioning-policy)
+8. [Schema Stability](#schema-stability)
+9. [Migration Support](#migration-support)
+10. [Breaking Changes](#breaking-changes)
+11. [Deprecation Policy](#deprecation-policy)
+
+---
+
+## Schema v1.5.0
+
+Schema v1.5.0 introduces the "Insight Layer" - efficiency analysis, data quality indicators, and zombie tool detection. This enables users to identify inefficient MCP usage patterns and provides accuracy labeling for all metrics.
+
+### Key Changes from v1.4.0
+
+| Change | v1.4.0 | v1.5.0 |
+|--------|--------|--------|
+| Smell detection | Not tracked | `smells` block with 5 anti-patterns |
+| Data quality | Not tracked | `data_quality` block with accuracy labels |
+| Zombie tools | Not tracked | `zombie_tools` block per server |
+| Schema version | `"1.4.0"` | `"1.5.0"` |
+
+### New Block: `smells`
+
+Efficiency anti-patterns detected in the session:
+
+```json
+{
+  "smells": [
+    {
+      "pattern": "HIGH_VARIANCE",
+      "severity": "warning",
+      "tool": "mcp__zen__thinkdeep",
+      "description": "Token counts vary significantly (σ=45000, range: 10K-150K)",
+      "evidence": {
+        "std_dev": 45000,
+        "min_tokens": 10000,
+        "max_tokens": 150000,
+        "call_count": 5
+      }
+    },
+    {
+      "pattern": "TOP_CONSUMER",
+      "severity": "info",
+      "tool": "mcp__zen__consensus",
+      "description": "Single tool consuming 65% of session tokens",
+      "evidence": {
+        "tool_tokens": 850000,
+        "session_tokens": 1300000,
+        "percentage": 65.4
+      }
+    }
+  ]
+}
+```
+
+#### Smell Patterns
+
+| Pattern | Severity | Threshold | Description |
+|---------|----------|-----------|-------------|
+| `HIGH_VARIANCE` | warning | σ > 30% of mean | Tool with unusually variable token counts |
+| `TOP_CONSUMER` | info | >50% of total | Single tool consuming majority of tokens |
+| `HIGH_MCP_SHARE` | info | >80% of total | MCP tools consuming most session tokens |
+| `CHATTY` | warning | >20 calls | Tool called excessively in one session |
+| `LOW_CACHE_HIT` | warning | <30% ratio | Cache hit rate below efficient threshold |
+
+#### Smell Entry Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `pattern` | string | Pattern identifier (see table above) |
+| `severity` | string | `"info"`, `"warning"`, or `"error"` |
+| `tool` | string | Tool name triggering the smell (optional) |
+| `description` | string | Human-readable explanation |
+| `evidence` | object | Pattern-specific supporting data |
+
+### New Block: `data_quality`
+
+Accuracy indicators for all metrics in the session:
+
+```json
+{
+  "data_quality": {
+    "accuracy_level": "estimated",
+    "token_source": "tiktoken",
+    "token_encoding": "o200k_base",
+    "confidence": 0.99,
+    "notes": "Tokens estimated using tiktoken o200k_base (~99% accuracy for Codex CLI)"
+  }
+}
+```
+
+#### Accuracy Levels
+
+| Value | Description | Platforms |
+|-------|-------------|-----------|
+| `exact` | Native platform tokens | Claude Code |
+| `estimated` | Tokenizer-based estimation | Codex CLI, Gemini CLI |
+| `calls-only` | Only call counts, no tokens | Future Ollama CLI |
+
+#### Data Quality Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `accuracy_level` | string | `"exact"`, `"estimated"`, or `"calls-only"` |
+| `token_source` | string | Tokenizer used (e.g., `"native"`, `"tiktoken"`, `"sentencepiece"`) |
+| `token_encoding` | string | Specific encoding (e.g., `"o200k_base"`, `"gemma"`) |
+| `confidence` | float | Estimated accuracy (0.0-1.0) |
+| `notes` | string | Additional context about data quality |
+
+### New Block: `zombie_tools`
+
+MCP tools defined in server schemas but never called during the session:
+
+```json
+{
+  "zombie_tools": {
+    "zen": ["mcp__zen__refactor", "mcp__zen__precommit"],
+    "backlog": ["mcp__backlog__task_archive"]
+  }
+}
+```
+
+#### Zombie Tools Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `<server_name>` | array | List of tool names defined but never used |
+
+**Note**: Zombie tools indicate potential context overhead. Each unused tool's schema is included in the context but provides no value.
+
+### Updated Complete Schema (v1.5.0)
+
+```json
+{
+  "_file": {
+    "name": "mcp-audit-2025-12-10T14-19-38.json",
+    "type": "mcp_audit_session",
+    "purpose": "Complete MCP session log with token usage and tool call statistics for AI agent analysis",
+    "schema_version": "1.5.0",
+    "schema_docs": "https://github.com/littlebearapps/mcp-audit/blob/main/docs/data-contract.md",
+    "generated_by": "mcp-audit v0.5.0",
+    "generated_at": "2025-12-10T14:19:55+11:00"
+  },
+
+  "session": { ... },
+  "token_usage": { ... },
+  "cost_estimate_usd": 1.23,
+  "mcp_summary": { ... },
+  "builtin_tool_summary": { ... },
+  "cache_analysis": { ... },
+  "tool_calls": [ ... ],
+
+  "smells": [
+    {
+      "pattern": "HIGH_VARIANCE",
+      "severity": "warning",
+      "tool": "mcp__zen__thinkdeep",
+      "description": "Token counts vary significantly",
+      "evidence": { ... }
+    }
+  ],
+
+  "data_quality": {
+    "accuracy_level": "exact",
+    "token_source": "native",
+    "confidence": 1.0,
+    "notes": "Native Claude Code token attribution"
+  },
+
+  "zombie_tools": {
+    "zen": ["mcp__zen__refactor"]
+  },
+
+  "analysis": { ... }
+}
+```
+
+**Backward Compatibility:**
+
+- Old readers (v1.4.0 and earlier) ignore the new blocks (`smells`, `data_quality`, `zombie_tools`)
+- Old sessions without these blocks are read with defaults (empty smells, no data quality info)
+- Schema version in `_file.schema_version` indicates presence of new fields
 
 ---
 
@@ -773,6 +951,20 @@ v2.0.0+6mo - v1.x support ends
 | v1.2.0 | Added `builtin_tool_summary` (not breaking) | Automatic - new field ignored by old readers |
 | v1.3.0 | Added `reasoning_tokens` field (not breaking) | Automatic - new field ignored by old readers |
 | v1.4.0 | Added token estimation fields (not breaking) | Automatic - new fields ignored by old readers |
+| v1.5.0 | Added `smells`, `data_quality`, `zombie_tools` (not breaking) | Automatic - new blocks ignored by old readers |
+
+### v1.5.0 Changes (Non-Breaking)
+
+v1.5.0 introduces the Insight Layer with efficiency analysis and data quality indicators:
+
+| Change | Type | Impact |
+|--------|------|--------|
+| Added `smells` block | Additive | New block, ignored by old readers |
+| Added `data_quality` block | Additive | New block, ignored by old readers |
+| Added `zombie_tools` block | Additive | New block, ignored by old readers |
+| Smell detection for 5 patterns | Feature | HIGH_VARIANCE, TOP_CONSUMER, HIGH_MCP_SHARE, CHATTY, LOW_CACHE_HIT |
+| Accuracy labeling | Feature | exact/estimated/calls-only indicators |
+| Zombie tool detection | Feature | Tracks unused MCP tools per server |
 
 ### v1.4.0 Changes (Non-Breaking)
 

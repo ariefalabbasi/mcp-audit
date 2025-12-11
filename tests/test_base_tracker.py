@@ -17,6 +17,9 @@ from mcp_audit.base_tracker import (
     TokenUsage,
     MCPToolCalls,
     SCHEMA_VERSION,
+    # v1.5.0: Insight Layer
+    Smell,
+    DataQuality,
 )
 
 
@@ -925,6 +928,361 @@ class TestCacheAnalysis:
         assert data["cost_estimate_usd"] == 1.00
         assert data["cost_no_cache_usd"] == 1.25
         assert data["cache_savings_usd"] == 0.25
+
+
+# ============================================================================
+# Schema v1.5.0 Tests (Insight Layer)
+# ============================================================================
+
+
+class TestSmellDataStructure:
+    """Tests for Smell dataclass (v1.5.0 - task-103.3)"""
+
+    def test_smell_creation_basic(self) -> None:
+        """Test basic Smell creation"""
+        smell = Smell(
+            pattern="HIGH_VARIANCE",
+            severity="warning",
+            tool="mcp__zen__thinkdeep",
+            description="Token counts vary significantly",
+            evidence={"std_dev": 45000, "min_tokens": 10000, "max_tokens": 150000},
+        )
+
+        assert smell.pattern == "HIGH_VARIANCE"
+        assert smell.severity == "warning"
+        assert smell.tool == "mcp__zen__thinkdeep"
+        assert smell.description == "Token counts vary significantly"
+        assert smell.evidence["std_dev"] == 45000
+
+    def test_smell_to_dict_with_tool(self) -> None:
+        """Test Smell.to_dict() includes tool when set"""
+        smell = Smell(
+            pattern="CHATTY",
+            severity="warning",
+            tool="mcp__zen__chat",
+            description="Called 25 times",
+            evidence={"call_count": 25, "threshold": 20},
+        )
+
+        data = smell.to_dict()
+
+        assert data["pattern"] == "CHATTY"
+        assert data["severity"] == "warning"
+        assert data["tool"] == "mcp__zen__chat"
+        assert data["description"] == "Called 25 times"
+        assert data["evidence"]["call_count"] == 25
+
+    def test_smell_to_dict_without_tool(self) -> None:
+        """Test Smell.to_dict() omits tool when None (session-level smells)"""
+        smell = Smell(
+            pattern="HIGH_MCP_SHARE",
+            severity="info",
+            description="MCP tools consuming 85% of session tokens",
+            evidence={"mcp_percentage": 85.0},
+        )
+
+        data = smell.to_dict()
+
+        assert data["pattern"] == "HIGH_MCP_SHARE"
+        assert "tool" not in data
+        assert data["evidence"]["mcp_percentage"] == 85.0
+
+    def test_smell_default_values(self) -> None:
+        """Test Smell default values"""
+        smell = Smell(pattern="TOP_CONSUMER")
+
+        assert smell.severity == "info"
+        assert smell.tool is None
+        assert smell.description == ""
+        assert smell.evidence == {}
+
+
+class TestDataQualityDataStructure:
+    """Tests for DataQuality dataclass (v1.5.0 - task-103.3)"""
+
+    def test_data_quality_creation_exact(self) -> None:
+        """Test DataQuality for Claude Code (exact tokens)"""
+        dq = DataQuality(
+            accuracy_level="exact",
+            token_source="native",
+            confidence=1.0,
+            notes="Native Claude Code token attribution",
+        )
+
+        assert dq.accuracy_level == "exact"
+        assert dq.token_source == "native"
+        assert dq.token_encoding is None
+        assert dq.confidence == 1.0
+
+    def test_data_quality_creation_estimated(self) -> None:
+        """Test DataQuality for Codex CLI (estimated tokens)"""
+        dq = DataQuality(
+            accuracy_level="estimated",
+            token_source="tiktoken",
+            token_encoding="o200k_base",
+            confidence=0.99,
+            notes="Tokens estimated using tiktoken o200k_base",
+        )
+
+        assert dq.accuracy_level == "estimated"
+        assert dq.token_source == "tiktoken"
+        assert dq.token_encoding == "o200k_base"
+        assert dq.confidence == 0.99
+
+    def test_data_quality_to_dict_with_encoding(self) -> None:
+        """Test DataQuality.to_dict() includes encoding when set"""
+        dq = DataQuality(
+            accuracy_level="estimated",
+            token_source="sentencepiece",
+            token_encoding="gemma",
+            confidence=1.0,
+            notes="Using Gemma tokenizer",
+        )
+
+        data = dq.to_dict()
+
+        assert data["accuracy_level"] == "estimated"
+        assert data["token_source"] == "sentencepiece"
+        assert data["token_encoding"] == "gemma"
+        assert data["confidence"] == 1.0
+        assert data["notes"] == "Using Gemma tokenizer"
+
+    def test_data_quality_to_dict_without_encoding(self) -> None:
+        """Test DataQuality.to_dict() omits encoding when None"""
+        dq = DataQuality(
+            accuracy_level="exact",
+            token_source="native",
+            confidence=1.0,
+        )
+
+        data = dq.to_dict()
+
+        assert "token_encoding" not in data
+        assert "notes" not in data
+
+    def test_data_quality_default_values(self) -> None:
+        """Test DataQuality default values"""
+        dq = DataQuality()
+
+        assert dq.accuracy_level == "exact"
+        assert dq.token_source == "native"
+        assert dq.token_encoding is None
+        assert dq.confidence == 1.0
+        assert dq.notes == ""
+
+
+class TestSessionV150Fields:
+    """Tests for Session v1.5.0 fields (task-103.3)"""
+
+    def test_session_has_smells_field(self) -> None:
+        """Test Session has smells list field"""
+        session = Session(project="test", platform="test", session_id="test-123")
+
+        assert hasattr(session, "smells")
+        assert session.smells == []
+
+    def test_session_has_data_quality_field(self) -> None:
+        """Test Session has data_quality field"""
+        session = Session(project="test", platform="test", session_id="test-123")
+
+        assert hasattr(session, "data_quality")
+        assert session.data_quality is None
+
+    def test_session_has_zombie_tools_field(self) -> None:
+        """Test Session has zombie_tools field"""
+        session = Session(project="test", platform="test", session_id="test-123")
+
+        assert hasattr(session, "zombie_tools")
+        assert session.zombie_tools == {}
+
+    def test_session_to_dict_includes_smells(self) -> None:
+        """Test Session.to_dict() includes smells block"""
+        session = Session(project="test", platform="claude-code", session_id="test-123")
+        session.smells = [
+            Smell(
+                pattern="CHATTY",
+                severity="warning",
+                tool="mcp__zen__chat",
+                description="Called 25 times",
+                evidence={"call_count": 25},
+            ),
+            Smell(
+                pattern="TOP_CONSUMER",
+                severity="info",
+                tool="mcp__zen__thinkdeep",
+                description="60% of tokens",
+                evidence={"percentage": 60.0},
+            ),
+        ]
+
+        data = session.to_dict()
+
+        assert "smells" in data
+        assert len(data["smells"]) == 2
+        assert data["smells"][0]["pattern"] == "CHATTY"
+        assert data["smells"][1]["pattern"] == "TOP_CONSUMER"
+
+    def test_session_to_dict_includes_data_quality(self) -> None:
+        """Test Session.to_dict() includes data_quality when set"""
+        session = Session(project="test", platform="codex-cli", session_id="test-123")
+        session.data_quality = DataQuality(
+            accuracy_level="estimated",
+            token_source="tiktoken",
+            token_encoding="o200k_base",
+            confidence=0.99,
+        )
+
+        data = session.to_dict()
+
+        assert "data_quality" in data
+        assert data["data_quality"]["accuracy_level"] == "estimated"
+        assert data["data_quality"]["token_encoding"] == "o200k_base"
+
+    def test_session_to_dict_omits_data_quality_when_none(self) -> None:
+        """Test Session.to_dict() omits data_quality when not set"""
+        session = Session(project="test", platform="claude-code", session_id="test-123")
+        # data_quality is None by default
+
+        data = session.to_dict()
+
+        assert "data_quality" not in data
+
+    def test_session_to_dict_includes_zombie_tools(self) -> None:
+        """Test Session.to_dict() includes zombie_tools block"""
+        session = Session(project="test", platform="claude-code", session_id="test-123")
+        session.zombie_tools = {
+            "zen": ["mcp__zen__refactor", "mcp__zen__precommit"],
+            "backlog": ["mcp__backlog__task_archive"],
+        }
+
+        data = session.to_dict()
+
+        assert "zombie_tools" in data
+        assert data["zombie_tools"]["zen"] == ["mcp__zen__refactor", "mcp__zen__precommit"]
+        assert data["zombie_tools"]["backlog"] == ["mcp__backlog__task_archive"]
+
+    def test_session_to_dict_empty_zombie_tools(self) -> None:
+        """Test Session.to_dict() includes empty zombie_tools when none detected"""
+        session = Session(project="test", platform="claude-code", session_id="test-123")
+
+        data = session.to_dict()
+
+        assert "zombie_tools" in data
+        assert data["zombie_tools"] == {}
+
+
+class TestSchemaVersion150:
+    """Tests for schema version 1.5.0 (task-103.3)"""
+
+    def test_schema_version_is_1_5_0(self) -> None:
+        """Test SCHEMA_VERSION constant is 1.5.0"""
+        assert SCHEMA_VERSION == "1.5.0"
+
+    def test_session_uses_schema_version_1_5_0(self) -> None:
+        """Test new Session objects use schema v1.5.0"""
+        session = Session(project="test", platform="test", session_id="test-123")
+
+        assert session.schema_version == "1.5.0"
+
+    def test_tracker_saves_with_schema_1_5_0(self, tmp_path) -> None:
+        """Test saved session files have schema v1.5.0 in _file header"""
+        import json
+
+        tracker = ConcreteTestTracker()
+        tracker.record_tool_call(tool_name="mcp__zen__chat", input_tokens=100, output_tokens=50)
+        tracker.finalize_session()
+        tracker.save_session(tmp_path)
+
+        # Load the saved session file
+        session_files = list(tracker.session_dir.glob("*.json"))
+        assert len(session_files) == 1
+
+        with open(session_files[0]) as f:
+            data = json.load(f)
+
+        assert data["_file"]["schema_version"] == "1.5.0"
+
+
+class TestDataQualityPerPlatform:
+    """Tests for data_quality initialization per platform (v1.5.0 - task-103.5)"""
+
+    def test_claude_code_data_quality_exact(self, tmp_path) -> None:
+        """Test Claude Code adapter sets data_quality to exact/native"""
+        from mcp_audit.claude_code_adapter import ClaudeCodeAdapter
+
+        # Create mock Claude directory structure for CI
+        mock_claude_dir = tmp_path / "claude"
+        mock_claude_dir.mkdir(parents=True)
+
+        adapter = ClaudeCodeAdapter(project="test", claude_dir=mock_claude_dir)
+
+        assert adapter.session.data_quality is not None
+        assert adapter.session.data_quality.accuracy_level == "exact"
+        assert adapter.session.data_quality.token_source == "native"
+        assert adapter.session.data_quality.confidence == 1.0
+        assert "Native token counts" in adapter.session.data_quality.notes
+
+    def test_codex_cli_data_quality_estimated(self, tmp_path, monkeypatch) -> None:
+        """Test Codex CLI adapter sets data_quality to estimated/tiktoken"""
+        from mcp_audit.codex_cli_adapter import CodexCLIAdapter
+
+        # Create mock Codex directory structure for CI
+        mock_codex_dir = tmp_path / ".codex"
+        mock_codex_dir.mkdir(parents=True)
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+        adapter = CodexCLIAdapter(project="test")
+
+        assert adapter.session.data_quality is not None
+        assert adapter.session.data_quality.accuracy_level == "estimated"
+        assert adapter.session.data_quality.token_source == "tiktoken"
+        assert adapter.session.data_quality.token_encoding == "o200k_base"
+        assert adapter.session.data_quality.confidence == 0.99
+        assert "tiktoken" in adapter.session.data_quality.notes
+
+    def test_gemini_cli_data_quality_estimated(self, tmp_path, monkeypatch) -> None:
+        """Test Gemini CLI adapter sets data_quality to estimated"""
+        from mcp_audit.gemini_cli_adapter import GeminiCLIAdapter
+
+        # Create mock Gemini directory structure for CI
+        mock_gemini_dir = tmp_path / ".gemini"
+        mock_gemini_dir.mkdir(parents=True)
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+        adapter = GeminiCLIAdapter(project="test")
+
+        assert adapter.session.data_quality is not None
+        assert adapter.session.data_quality.accuracy_level == "estimated"
+        # Token source depends on whether Gemma tokenizer is available
+        assert adapter.session.data_quality.token_source in ["sentencepiece", "tiktoken"]
+        # Confidence is 1.0 for Gemma, 0.95 for tiktoken fallback
+        assert adapter.session.data_quality.confidence in [1.0, 0.95]
+
+    def test_data_quality_serializes_to_session_file(self, tmp_path, monkeypatch) -> None:
+        """Test data_quality block appears in saved session JSON"""
+        import json
+
+        from mcp_audit.codex_cli_adapter import CodexCLIAdapter
+
+        # Create mock Codex directory structure for CI
+        mock_codex_dir = tmp_path / ".codex"
+        mock_codex_dir.mkdir(parents=True)
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+        adapter = CodexCLIAdapter(project="test")
+        adapter.finalize_session()
+        adapter.save_session(tmp_path)
+
+        # Load the saved session file
+        session_files = list(adapter.session_dir.glob("*.json"))
+        assert len(session_files) == 1
+
+        with open(session_files[0]) as f:
+            data = json.load(f)
+
+        assert "data_quality" in data
+        assert data["data_quality"]["accuracy_level"] == "estimated"
+        assert data["data_quality"]["token_source"] == "tiktoken"
 
 
 if __name__ == "__main__":

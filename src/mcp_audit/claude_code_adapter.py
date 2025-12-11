@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
 
-from .base_tracker import BaseTracker
+from .base_tracker import BaseTracker, DataQuality
 from .pricing_config import PricingConfig
 
 if TYPE_CHECKING:
@@ -190,6 +190,16 @@ class ClaudeCodeAdapter(BaseTracker):
 
         # Warnings tracking (task-46.10)
         self._warnings: List[Dict[str, Any]] = []
+
+        # Data quality (v1.5.0 - task-103.5)
+        # Claude Code provides exact native token counts from the API
+        self.session.data_quality = DataQuality(
+            accuracy_level="exact",
+            token_source="native",
+            token_encoding=None,  # Native API tokens, no encoding needed
+            confidence=1.0,
+            notes="Native token counts from Claude API response",
+        )
 
         # Source file tracking (task-50)
         self._active_source_files: Set[str] = set()
@@ -724,6 +734,10 @@ class ClaudeCodeAdapter(BaseTracker):
             warnings_count=warnings_count,
             health_status=health_status,
             files_monitored=len(self.file_positions),
+            # Data quality (v1.5.0 - task-103.5)
+            accuracy_level="exact",
+            token_source="native",
+            data_quality_confidence=1.0,
         )
 
     # ========================================================================
