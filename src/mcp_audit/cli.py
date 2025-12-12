@@ -1105,9 +1105,60 @@ def cmd_init(args: argparse.Namespace) -> int:
     print()
 
     # ========================================================================
-    # Check 3: Output directories
+    # Check 3: Pricing configuration (v1.6.0 - task-108.3.4)
     # ========================================================================
-    print("[3/3] Checking output directories...")
+    print("[3/4] Checking pricing configuration...")
+    print()
+
+    from .pricing_config import PricingConfig
+
+    pricing_config = PricingConfig()
+    pricing_source = pricing_config.pricing_source
+
+    # Display pricing source
+    if pricing_source == "api":
+        print("  ✓ Dynamic pricing enabled (LiteLLM API)")
+        if pricing_config._pricing_api:
+            api = pricing_config._pricing_api
+            print(f"    Models available: {api.model_count:,}")
+            if api.expires_in:
+                hours_left = api.expires_in.total_seconds() / 3600
+                print(f"    Cache expires in: {hours_left:.1f} hours")
+    elif pricing_source == "cache":
+        print("  ✓ Pricing from cached API data")
+        if pricing_config._pricing_api:
+            api = pricing_config._pricing_api
+            print(f"    Models available: {api.model_count:,}")
+            if api.expires_in:
+                hours_left = api.expires_in.total_seconds() / 3600
+                print(f"    Cache expires in: {hours_left:.1f} hours")
+    elif pricing_source == "file":
+        print("  ✓ Pricing from mcp-audit.toml")
+        model_count = len(pricing_config.list_models())
+        print(f"    Models configured: {model_count}")
+        print(f"    Last updated: {pricing_config.metadata.get('last_updated', 'unknown')}")
+    else:  # defaults
+        print("  ○ Using built-in default pricing")
+        print("    For custom models, create mcp-audit.toml")
+        model_count = len(pricing_config.list_models())
+        print(f"    Default models: {model_count}")
+
+    # Check API configuration
+    if (
+        hasattr(pricing_config, "_api_enabled")
+        and pricing_config._api_enabled
+        and pricing_source not in ("api", "cache")
+    ):
+        print()
+        print("  ℹ Dynamic pricing enabled but not loaded")
+        print("    Will fetch on first cost calculation (requires network)")
+
+    print()
+
+    # ========================================================================
+    # Check 4: Output directories
+    # ========================================================================
+    print("[4/4] Checking output directories...")
     print()
 
     sessions_dir = Path.home() / ".mcp-audit" / "sessions"
@@ -1504,6 +1555,11 @@ def generate_ai_prompt_markdown(session_data: Dict[str, Any], session_path: Path
         lines.append(f"- **Accuracy Level**: {data_quality.get('accuracy_level', 'unknown')}")
         lines.append(f"- **Token Source**: {data_quality.get('token_source', 'unknown')}")
         lines.append(f"- **Confidence**: {data_quality.get('confidence', 0):.0%}")
+        # v1.6.0: Pricing source fields (task-108.3.4)
+        if data_quality.get("pricing_source"):
+            lines.append(f"- **Pricing Source**: {data_quality.get('pricing_source')}")
+        if data_quality.get("pricing_freshness"):
+            lines.append(f"- **Pricing Freshness**: {data_quality.get('pricing_freshness')}")
         if data_quality.get("notes"):
             lines.append(f"- **Notes**: {data_quality['notes']}")
         lines.append("")

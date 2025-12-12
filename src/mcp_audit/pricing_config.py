@@ -2,13 +2,19 @@
 """
 Pricing Configuration Module - Model pricing loader and validator
 
-Loads pricing data from mcp-audit.toml configuration file.
+Loads pricing data from LiteLLM API (primary) or mcp-audit.toml (fallback).
 Provides validation and warnings for missing pricing.
 """
 
+import logging
 import warnings
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+if TYPE_CHECKING:
+    from .pricing_api import PricingAPI
+
+logger = logging.getLogger(__name__)
 
 # Try Python 3.11+ built-in tomllib, fall back to toml package
 try:
@@ -131,7 +137,11 @@ class PricingConfig:
         "exchange_rates": {"USD_to_AUD": 1.54},
     }
 
-    def __init__(self, config_path: Optional[Path] = None):
+    def __init__(
+        self,
+        config_path: Optional[Path] = None,
+        api_enabled: Optional[bool] = None,
+    ):
         """
         Initialize pricing configuration.
 
@@ -141,19 +151,32 @@ class PricingConfig:
                         2. ~/.mcp-audit/mcp-audit.toml (user config)
                         3. Package root (bundled default)
                         4. Falls back to DEFAULT_PRICING if no file found (task-67)
+            api_enabled: Override API pricing (None = use config, True/False = force)
         """
         self.config_path = config_path or self._find_config()
         self.pricing_data: Dict[str, Dict[str, Any]] = {}
         self.metadata: Dict[str, Any] = {}
         self.loaded = False
-        self._source = "none"  # Track pricing source: "file", "defaults", or "none"
+        self._source = "none"  # Track pricing source: "file", "defaults", "api", etc.
 
+        # API pricing configuration (task-108.3.3)
+        self._pricing_api: Optional[PricingAPI] = None
+        self._api_enabled = api_enabled if api_enabled is not None else True
+        self._api_ttl_hours = 24
+        self._api_offline_mode = False
+
+        # Load TOML config first (to get API settings)
         if self.config_path and self.config_path.exists():
             self.load()
+            self._load_api_config()
             self._source = "file"
         else:
             # Fall back to default pricing (task-67)
             self._load_defaults()
+
+        # Try API pricing if enabled (task-108.3.3)
+        if self._api_enabled and not self._api_offline_mode:
+            self._try_load_api()
 
     def _find_config(self) -> Optional[Path]:
         """Search standard locations for config file."""
@@ -168,6 +191,44 @@ class PricingConfig:
         self.metadata = self.DEFAULT_METADATA.copy()
         self.loaded = True
         self._source = "defaults"
+
+    def _load_api_config(self) -> None:
+        """Load API configuration from TOML file (task-108.3.3)."""
+        if not self.config_path or not self.config_path.exists():
+            return
+
+        try:
+            with open(self.config_path, "rb") as f:
+                config = tomllib.load(f)
+
+            api_config = config.get("pricing", {}).get("api", {})
+            if api_config:
+                # Only override if not already set via constructor
+                if api_config.get("enabled") is not None:
+                    self._api_enabled = api_config.get("enabled", True)
+                self._api_ttl_hours = api_config.get("cache_ttl_hours", 24)
+                self._api_offline_mode = api_config.get("offline_mode", False)
+        except Exception as e:
+            logger.debug(f"Failed to load API config from TOML: {e}")
+
+    def _try_load_api(self) -> None:
+        """Try to initialize and load pricing from API (task-108.3.3)."""
+        try:
+            from .pricing_api import PricingAPI
+
+            self._pricing_api = PricingAPI(
+                cache_ttl_hours=self._api_ttl_hours,
+                enabled=True,
+            )
+            # Trigger data loading
+            self._pricing_api._load_pricing()
+
+            if self._pricing_api._pricing_data:
+                logger.debug(f"API pricing available: {self._pricing_api.model_count} models")
+        except ImportError:
+            logger.debug("PricingAPI not available")
+        except Exception as e:
+            logger.debug(f"Failed to load API pricing: {e}")
 
     def load(self) -> None:
         """Load pricing configuration from TOML file."""
@@ -194,6 +255,11 @@ class PricingConfig:
         """
         Get pricing for a specific model.
 
+        Checks in order:
+        1. LiteLLM API (if enabled and available)
+        2. TOML config file
+        3. Default pricing
+
         Args:
             model_name: Model identifier (e.g., 'claude-sonnet-4-5-20250929')
             vendor: Vendor namespace (e.g., 'claude', 'openai', 'custom')
@@ -203,6 +269,19 @@ class PricingConfig:
             Dictionary with pricing keys: input, output, cache_create, cache_read
             Returns None if model not found
         """
+        # Try API pricing first (task-108.3.3)
+        if self._pricing_api and self._api_enabled:
+            api_pricing = self._pricing_api.get_pricing(model_name)
+            if api_pricing:
+                return api_pricing
+
+        # Fall back to TOML/defaults
+        return self._get_toml_pricing(model_name, vendor)
+
+    def _get_toml_pricing(
+        self, model_name: str, vendor: Optional[str] = None
+    ) -> Optional[Dict[str, float]]:
+        """Get pricing from TOML config or defaults (internal fallback)."""
         if not self.loaded:
             warnings.warn(
                 f"Pricing config not loaded. Missing file: {self.config_path}",
@@ -332,7 +411,11 @@ class PricingConfig:
             result["warnings"].append("No pricing data configured")
 
         # Validate each model's pricing structure
+        # Skip 'api' key as it contains configuration, not pricing data
         for vendor, models in self.pricing_data.items():
+            if vendor == "api":
+                continue  # Skip API configuration section
+
             for model_name, pricing in models.items():
                 if not isinstance(pricing, dict):
                     result["errors"].append(f"Invalid pricing format for {vendor}.{model_name}")
@@ -358,6 +441,29 @@ class PricingConfig:
                             result["valid"] = False
 
         return result
+
+    @property
+    def pricing_source(self) -> str:
+        """Return the active pricing source (task-108.3.3).
+
+        Returns:
+            - 'api': Fresh from LiteLLM API
+            - 'cache': Cached API data
+            - 'cache-stale': Expired API cache
+            - 'file': TOML configuration file
+            - 'defaults': Hardcoded default pricing
+            - 'none': No pricing available
+        """
+        if self._pricing_api and self._pricing_api.source != "none":
+            return self._pricing_api.source
+        return self._source
+
+    @property
+    def api_model_count(self) -> int:
+        """Return number of models available from API."""
+        if self._pricing_api:
+            return self._pricing_api.model_count
+        return 0
 
 
 # ============================================================================

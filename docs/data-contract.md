@@ -1,8 +1,8 @@
 # MCP Audit Data Contract
 
-**Version**: 1.5.0
-**Last Updated**: 2025-12-10
-**Status**: Active
+**Version**: 1.6.0
+**Last Updated**: 2025-12-12
+**Status**: Active (shipped in v0.6.0)
 
 This document defines the data contract for MCP Audit, including backward compatibility guarantees, versioning policy, and migration guidelines.
 
@@ -10,17 +10,313 @@ This document defines the data contract for MCP Audit, including backward compat
 
 ## Table of Contents
 
-1. [Schema v1.5.0](#schema-v150)
-2. [Schema v1.4.0](#schema-v140)
-3. [Schema v1.3.0](#schema-v130)
-4. [Schema v1.2.0](#schema-v120)
-5. [Schema v1.1.0](#schema-v110)
-6. [Backward Compatibility Guarantee](#backward-compatibility-guarantee)
-7. [Versioning Policy](#versioning-policy)
-8. [Schema Stability](#schema-stability)
-9. [Migration Support](#migration-support)
-10. [Breaking Changes](#breaking-changes)
-11. [Deprecation Policy](#deprecation-policy)
+1. [Schema v1.6.0](#schema-v160)
+2. [Schema v1.5.0](#schema-v150)
+3. [Schema v1.4.0](#schema-v140)
+4. [Schema v1.3.0](#schema-v130)
+5. [Schema v1.2.0](#schema-v120)
+6. [Schema v1.1.0](#schema-v110)
+7. [Backward Compatibility Guarantee](#backward-compatibility-guarantee)
+8. [Versioning Policy](#versioning-policy)
+9. [Schema Stability](#schema-stability)
+10. [Migration Support](#migration-support)
+11. [Breaking Changes](#breaking-changes)
+12. [Deprecation Policy](#deprecation-policy)
+
+---
+
+## Schema v1.6.0
+
+Schema v1.6.0 introduces "Multi-Model Intelligence" - per-model token tracking, dynamic pricing integration, and foundation for static cost analysis.
+
+### Key Changes from v1.5.0
+
+| Change | v1.5.0 | v1.6.0 |
+|--------|--------|--------|
+| Multi-model tracking | Not tracked | `models_used` and `model_usage` blocks |
+| Per-call model | Not tracked | `tool_calls[].model` field |
+| Pricing source | Not tracked | `data_quality.pricing_source` |
+| Pricing freshness | Not tracked | `data_quality.pricing_freshness` |
+| Static cost | Not tracked | `static_cost` block with per-server breakdown |
+| Schema version | `"1.5.0"` | `"1.6.0"` |
+
+### New Field: `session.models_used`
+
+Array of unique model identifiers used during the session:
+
+```json
+{
+  "session": {
+    "id": "mcp-audit-2025-12-11T14-00-00",
+    "platform": "claude-code",
+    "model": "claude-sonnet-4-20250514",
+    "models_used": [
+      "claude-sonnet-4-20250514",
+      "claude-opus-4-5-20251101"
+    ]
+  }
+}
+```
+
+**Field Details:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `models_used` | array | List of unique model IDs used in session (may be single-element for most sessions) |
+
+**Note**: The primary `model` field contains the initial/most-used model. `models_used` tracks all models when users switch mid-session.
+
+### New Block: `model_usage`
+
+Per-model token and cost breakdown for multi-model sessions:
+
+```json
+{
+  "model_usage": {
+    "claude-sonnet-4-20250514": {
+      "input_tokens": 50000,
+      "output_tokens": 15000,
+      "cache_created_tokens": 2000,
+      "cache_read_tokens": 100000,
+      "total_tokens": 167000,
+      "cost_usd": 0.45,
+      "call_count": 12
+    },
+    "claude-opus-4-5-20251101": {
+      "input_tokens": 10000,
+      "output_tokens": 5000,
+      "cache_created_tokens": 0,
+      "cache_read_tokens": 25000,
+      "total_tokens": 40000,
+      "cost_usd": 0.18,
+      "call_count": 3
+    }
+  }
+}
+```
+
+#### Model Usage Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `input_tokens` | int | Total input tokens for this model |
+| `output_tokens` | int | Total output tokens for this model |
+| `cache_created_tokens` | int | Cache creation tokens for this model |
+| `cache_read_tokens` | int | Cache read tokens for this model |
+| `total_tokens` | int | Sum of all token types |
+| `cost_usd` | float | Cost estimate for this model's usage |
+| `call_count` | int | Number of tool calls using this model |
+
+**Platform Behavior:**
+
+| Platform | Multi-Model Support | Notes |
+|----------|---------------------|-------|
+| Claude Code | Yes | Users can switch models via `/model` command |
+| Codex CLI | Yes | Model specified per session or via flags |
+| Gemini CLI | Limited | Model typically fixed per session |
+
+### New Field: `tool_calls[].model`
+
+Per-call model tracking:
+
+```json
+{
+  "tool_calls": [
+    {
+      "index": 1,
+      "tool": "mcp__backlog__task_list",
+      "server": "backlog",
+      "model": "claude-sonnet-4-20250514",
+      "input_tokens": 156,
+      "output_tokens": 2340
+    }
+  ]
+}
+```
+
+**Note**: The `model` field is only present when the model is known. For platforms without per-call model attribution, this field is omitted.
+
+### Updated Block: `data_quality`
+
+Extended with pricing source tracking:
+
+```json
+{
+  "data_quality": {
+    "accuracy_level": "exact",
+    "token_source": "native",
+    "confidence": 1.0,
+    "pricing_source": "api",
+    "pricing_freshness": "fresh",
+    "notes": "Tokens from native platform, pricing from LiteLLM API"
+  }
+}
+```
+
+#### New Data Quality Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `pricing_source` | string | Where pricing data came from |
+| `pricing_freshness` | string | Freshness of pricing data |
+
+#### Pricing Source Values
+
+| Value | Description |
+|-------|-------------|
+| `"api"` | Fresh from LiteLLM API (real-time) |
+| `"cache"` | Cached API data (within TTL) |
+| `"cache-stale"` | Expired API cache (fallback) |
+| `"file"` | TOML configuration file |
+| `"defaults"` | Hardcoded default pricing |
+
+#### Pricing Freshness Values
+
+| Value | Description |
+|-------|-------------|
+| `"fresh"` | Fetched within the last hour |
+| `"cached"` | Valid cache (within TTL, default 24h) |
+| `"stale"` | Cache expired or defaults used |
+| `"unknown"` | Freshness cannot be determined |
+
+### New Block: `static_cost`
+
+The "context tax" — static token overhead from MCP server tool schemas:
+
+```json
+{
+  "static_cost": {
+    "total_tokens": 6450,
+    "source": "mixed",
+    "by_server": {
+      "zen": 3000,
+      "backlog": 2250,
+      "brave-search": 1200
+    },
+    "confidence": 0.8
+  }
+}
+```
+
+#### Static Cost Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `total_tokens` | int | Total estimated tokens for all MCP server schemas |
+| `source` | string | Data source (`"known_db"`, `"estimate"`, `"mixed"`, `"none"`) |
+| `by_server` | object | Per-server token breakdown |
+| `confidence` | float | Confidence level (0.0-1.0) based on data sources |
+
+#### Source Values
+
+| Value | Description | Confidence |
+|-------|-------------|------------|
+| `"known_db"` | All servers from pre-measured database | 0.9 |
+| `"estimate"` | All servers estimated (10 tools × 175 tokens) | 0.7 |
+| `"mixed"` | Combination of known and estimated | Weighted average |
+| `"none"` | No MCP config found | 0.0 |
+
+#### Known Servers Database
+
+Pre-measured token counts for popular MCP servers:
+
+| Server | Tools | Tokens |
+|--------|-------|--------|
+| `backlog` | 15 | 2,250 |
+| `brave-search` | 6 | 1,200 |
+| `zen` | 12 | 3,000 |
+| `jina` | 20 | 3,600 |
+| `context7` | 5 | 750 |
+| `mult-fetch` | 3 | 450 |
+
+Unknown servers use default estimate: 10 tools × 175 tokens/tool = 1,750 tokens.
+
+**Platform Config Discovery:**
+
+| Platform | Config File |
+|----------|-------------|
+| Claude Code | `.mcp.json` in working directory |
+| Codex CLI | `~/.codex/config.toml` |
+| Gemini CLI | `~/.gemini/settings.json` |
+
+### Updated Complete Schema (v1.6.0)
+
+```json
+{
+  "_file": {
+    "name": "mcp-audit-2025-12-11T14-00-00.json",
+    "type": "mcp_audit_session",
+    "purpose": "Complete MCP session log with token usage and tool call statistics for AI agent analysis",
+    "schema_version": "1.6.0",
+    "schema_docs": "https://github.com/littlebearapps/mcp-audit/blob/main/docs/data-contract.md",
+    "generated_by": "mcp-audit v0.6.0",
+    "generated_at": "2025-12-11T14:00:00+11:00"
+  },
+
+  "session": {
+    "id": "mcp-audit-2025-12-11T14-00-00",
+    "project": "mcp-audit",
+    "platform": "claude-code",
+    "model": "claude-sonnet-4-20250514",
+    "models_used": ["claude-sonnet-4-20250514"],
+    "working_directory": "/Users/user/projects/mcp-audit/main",
+    "started_at": "2025-12-11T14:00:00+11:00",
+    "ended_at": "2025-12-11T14:30:00+11:00",
+    "duration_seconds": 1800.0,
+    "source_files": ["session-abc123.jsonl"],
+    "message_count": 25
+  },
+
+  "token_usage": { ... },
+  "cost_estimate_usd": 1.23,
+
+  "model_usage": {
+    "claude-sonnet-4-20250514": {
+      "input_tokens": 50000,
+      "output_tokens": 15000,
+      "cache_created_tokens": 2000,
+      "cache_read_tokens": 100000,
+      "total_tokens": 167000,
+      "cost_usd": 1.23,
+      "call_count": 15
+    }
+  },
+
+  "mcp_summary": { ... },
+  "builtin_tool_summary": { ... },
+  "cache_analysis": { ... },
+  "tool_calls": [ ... ],
+  "smells": [ ... ],
+  "zombie_tools": { ... },
+
+  "data_quality": {
+    "accuracy_level": "exact",
+    "token_source": "native",
+    "confidence": 1.0,
+    "pricing_source": "api",
+    "pricing_freshness": "fresh"
+  },
+
+  "static_cost": {
+    "total_tokens": 6450,
+    "source": "mixed",
+    "by_server": {
+      "zen": 3000,
+      "backlog": 2250,
+      "brave-search": 1200
+    },
+    "confidence": 0.8
+  },
+
+  "analysis": { ... }
+}
+```
+
+**Backward Compatibility:**
+
+- Old readers (v1.5.0 and earlier) ignore the new fields (`models_used`, `model_usage`, `tool_calls[].model`, `static_cost`)
+- Old sessions without these fields are read with defaults (empty model_usage, no per-call models, no static cost)
+- Schema version in `_file.schema_version` indicates presence of new fields
 
 ---
 
@@ -102,6 +398,8 @@ Accuracy indicators for all metrics in the session:
     "token_source": "tiktoken",
     "token_encoding": "o200k_base",
     "confidence": 0.99,
+    "pricing_source": "cache",
+    "pricing_freshness": "cached",
     "notes": "Tokens estimated using tiktoken o200k_base (~99% accuracy for Codex CLI)"
   }
 }
@@ -115,6 +413,8 @@ Accuracy indicators for all metrics in the session:
 | `estimated` | Tokenizer-based estimation | Codex CLI, Gemini CLI |
 | `calls-only` | Only call counts, no tokens | Future Ollama CLI |
 
+**Note on "estimated" vs "exact":** Codex CLI and Gemini CLI are marked "estimated" because while they provide native session-level token totals, mcp-audit estimates the per-MCP-tool breakdown using tiktoken/sentencepiece. Claude Code is "exact" because it provides per-message token attribution directly.
+
 #### Data Quality Fields
 
 | Field | Type | Description |
@@ -123,6 +423,8 @@ Accuracy indicators for all metrics in the session:
 | `token_source` | string | Tokenizer used (e.g., `"native"`, `"tiktoken"`, `"sentencepiece"`) |
 | `token_encoding` | string | Specific encoding (e.g., `"o200k_base"`, `"gemma"`) |
 | `confidence` | float | Estimated accuracy (0.0-1.0) |
+| `pricing_source` | string | **v1.6.0:** Pricing data source (`"api"`, `"cache"`, `"file"`, `"defaults"`) |
+| `pricing_freshness` | string | **v1.6.0:** Pricing freshness (`"fresh"`, `"cached"`, `"stale"`, `"unknown"`) |
 | `notes` | string | Additional context about data quality |
 
 ### New Block: `zombie_tools`
@@ -182,7 +484,8 @@ MCP tools defined in server schemas but never called during the session:
     "accuracy_level": "exact",
     "token_source": "native",
     "confidence": 1.0,
-    "notes": "Native Claude Code token attribution"
+    "pricing_source": "cache",
+    "pricing_freshness": "cached"
   },
 
   "zombie_tools": {
@@ -952,6 +1255,23 @@ v2.0.0+6mo - v1.x support ends
 | v1.3.0 | Added `reasoning_tokens` field (not breaking) | Automatic - new field ignored by old readers |
 | v1.4.0 | Added token estimation fields (not breaking) | Automatic - new fields ignored by old readers |
 | v1.5.0 | Added `smells`, `data_quality`, `zombie_tools` (not breaking) | Automatic - new blocks ignored by old readers |
+| v1.6.0 | Added `models_used`, `model_usage`, `tool_calls[].model`, `static_cost` (not breaking) | Automatic - new fields ignored by old readers |
+
+### v1.6.0 Changes (Non-Breaking)
+
+v1.6.0 introduces Multi-Model Intelligence with per-model tracking, dynamic pricing, and static cost analysis:
+
+| Change | Type | Impact |
+|--------|------|--------|
+| Added `session.models_used` array | Additive | New field, ignored by old readers |
+| Added `model_usage` block | Additive | New block, ignored by old readers |
+| Added `tool_calls[].model` field | Additive | New field, only present when known |
+| Added `data_quality.pricing_source` | Additive | New field in existing block |
+| Added `data_quality.pricing_freshness` | Additive | New field in existing block |
+| Added `static_cost` block | Additive | New block with per-server context tax |
+| Multi-model per-session tracking | Feature | Per-model token and cost breakdown |
+| Dynamic pricing via LiteLLM API | Feature | Real-time pricing with cache/fallback |
+| Context tax tracking | Feature | Static token overhead from MCP schemas |
 
 ### v1.5.0 Changes (Non-Breaking)
 

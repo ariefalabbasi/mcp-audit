@@ -1,6 +1,6 @@
 # Features & Benefits by Audience
 
-MCP Audit v0.5.0 - Features mapped to benefits for each target audience.
+MCP Audit v0.6.0 - Features mapped to benefits for each target audience.
 
 ---
 
@@ -21,6 +21,9 @@ MCP Audit v0.5.0 - Features mapped to benefits for each target audience.
 | **AI prompt export** (v0.5.0) | Export for automated analysis | Let AI analyze your sessions |
 | **Zombie tool detection** (v0.5.0) | Find unused tools in schema | Reduce context overhead |
 | **Data quality indicators** (v0.5.0) | Know estimation accuracy | Understand data confidence |
+| **Multi-model tracking** (v0.6.0) | Track model switches mid-session | Per-model cost breakdown |
+| **Dynamic pricing** (v0.6.0) | Auto-fetch current pricing | Always accurate costs |
+| **Context tax tracking** (v0.6.0) | Measure MCP schema overhead | See static context cost per server |
 
 ---
 
@@ -120,6 +123,130 @@ Every session now includes accuracy metadata:
 | `exact` | Native platform tokens | Claude Code |
 | `estimated` | Tokenizer-based estimation | Codex CLI, Gemini CLI |
 | `calls-only` | Only call counts, no tokens | Future Ollama CLI |
+
+---
+
+## v0.6.0 Features: Multi-Model Intelligence
+
+v0.6.0 introduces "Multi-Model Intelligence" — track sessions that switch between models, auto-fetch current pricing from LiteLLM, and measure MCP schema overhead.
+
+### Multi-Model Per-Session Tracking
+
+Track token usage when sessions switch between models (e.g., claude-3-5-sonnet → claude-3-5-haiku):
+
+```
+Models Used: claude-3-5-sonnet-20241022, claude-3-5-haiku-20241022
+───────────────────────────────────────────────────────────────
+Model                          Input      Output    Cost
+claude-3-5-sonnet-20241022     45,231     12,345    $0.2134
+claude-3-5-haiku-20241022      8,765      2,100     $0.0087
+```
+
+Session logs include per-model breakdown:
+```json
+{
+  "models_used": ["claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022"],
+  "model_usage": {
+    "claude-3-5-sonnet-20241022": {
+      "input_tokens": 45231,
+      "output_tokens": 12345,
+      "cost_usd": 0.2134,
+      "call_count": 15
+    },
+    "claude-3-5-haiku-20241022": {
+      "input_tokens": 8765,
+      "output_tokens": 2100,
+      "cost_usd": 0.0087,
+      "call_count": 5
+    }
+  }
+}
+```
+
+### Dynamic Pricing via LiteLLM
+
+Auto-fetch current pricing for 2,000+ models from the [LiteLLM pricing database](https://github.com/BerriAI/litellm):
+
+```toml
+# mcp-audit.toml — configure pricing behavior
+[pricing.api]
+enabled = true           # Enable API pricing (default: true)
+cache_ttl_hours = 24     # Cache pricing for 24 hours
+offline_mode = false     # Use TOML-only pricing
+```
+
+**Fallback chain**: API → TOML config → built-in defaults
+
+Session logs include pricing source:
+```json
+{
+  "data_quality": {
+    "pricing_source": "api",
+    "pricing_freshness": "2025-12-12T10:30:00Z"
+  }
+}
+```
+
+| Source | Description | Models |
+|--------|-------------|--------|
+| `api` | LiteLLM API (auto-refresh) | 2,000+ |
+| `toml` | Local mcp-audit.toml | Custom |
+| `default` | Built-in fallback | ~20 |
+
+### Context Tax Tracking
+
+Measure the "context tax" — the static token overhead from MCP server schemas that consume context before any work begins:
+
+```
+Context Tax
+─────────────────────────────────────
+Total: 6,450 tokens (static overhead)
+Confidence: 80%
+
+Per Server:
+  zen ............. 3,000 tokens
+  backlog ......... 2,250 tokens
+  brave-search .... 1,200 tokens
+
+Zombie Tax: +450 tokens (unused tools)
+```
+
+| Source | Description | Confidence |
+|--------|-------------|------------|
+| `known_db` | Pre-measured tool counts | 90% |
+| `estimate` | Default 10 tools × 175 tokens | 70% |
+| `mixed` | Combination of known + estimated | Weighted average |
+
+Session logs include static cost breakdown:
+```json
+{
+  "static_cost": {
+    "total_tokens": 6450,
+    "source": "mixed",
+    "by_server": {
+      "zen": 3000,
+      "backlog": 2250,
+      "brave-search": 1200
+    },
+    "confidence": 0.8
+  }
+}
+```
+
+**TUI Panel**: When context tax is detected, a dedicated panel shows:
+- Total static token overhead
+- Per-server breakdown with token counts
+- Zombie tool context tax (unused tools adding overhead)
+- Confidence indicator based on data source
+
+**Known Servers Database**: Pre-measured token counts for popular MCP servers:
+- `backlog` (15 tools, ~2,250 tokens)
+- `brave-search` (6 tools, ~1,200 tokens)
+- `zen` (12 tools, ~3,000 tokens)
+- `jina` (20 tools, ~3,600 tokens)
+- `context7` (5 tools, ~750 tokens)
+
+Unknown servers use conservative estimate: 10 tools × 175 tokens/tool.
 
 ---
 
@@ -437,4 +564,4 @@ mcp-audit report ~/.mcp-audit/sessions/
 
 ---
 
-*v0.5.0 | Schema v1.5.0 | MIT License*
+*v0.6.0 | Schema v1.6.0 | MIT License*

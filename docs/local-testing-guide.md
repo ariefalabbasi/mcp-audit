@@ -462,12 +462,28 @@ Check these fields in session logs:
 
 | Field | Expected | Notes |
 |-------|----------|-------|
+| `schema_version` | `"1.6.0"` | Current schema version |
 | `token_usage.input_tokens` | > 0 | Should match CLI output |
 | `token_usage.output_tokens` | > 0 | Model response tokens |
 | `token_usage.cache_read_tokens` | >= 0 | Cache hits (may be 0) |
 | `model` | Detected correctly | `claude-sonnet-4-*`, `gemini-2.5-pro`, or `gpt-5.1-codex-max` |
+| `models_used` | Array | v0.6.0: List of models used in session |
+| `model_usage` | Object or null | v0.6.0: Per-model breakdown (if multi-model) |
+| `static_cost` | Object or null | v0.6.0: MCP schema context tax |
 | `tool_calls` | Array | MCP tools with `mcp__` prefix |
 | `cost_usd` | Calculated | Based on token counts |
+| `data_quality.accuracy_level` | Platform-specific | See table below |
+| `data_quality.pricing_source` | String | `litellm_api`, `cache`, or `toml_fallback` |
+
+### Platform Accuracy Levels
+
+Each platform has different token tracking capabilities:
+
+| Platform | `accuracy_level` | Token Source | Expected Variance |
+|----------|-----------------|--------------|-------------------|
+| Claude Code | `exact` | Native API tokens | < 5% vs native |
+| Gemini CLI | `estimated` | tiktoken approximation | 10-20% vs native |
+| Codex CLI | `estimated` | tiktoken (o200k_base) | ~99% vs native session totals |
 
 ---
 
@@ -913,6 +929,135 @@ grep -E "Cost w/" /tmp/tui.txt           # Cost display
 
 ---
 
+## Live Monitoring vs Batch Mode
+
+mcp-audit supports two modes of operation. Understanding when to use each is critical for testing.
+
+### Mode Comparison
+
+| Mode | Command | Use Case | Captures |
+|------|---------|----------|----------|
+| **Live** | `mcp-audit collect --platform xxx` | Real-time monitoring | Active sessions as they happen |
+| **Batch** | `mcp-audit collect --platform xxx --batch --latest` | Post-processing | Existing session files |
+
+### Live Monitoring (Recommended for Integration Testing)
+
+**Key insight**: mcp-audit must be running BEFORE the AI session starts to capture live data.
+
+```bash
+# Step 1: Start mcp-audit in tmux FIRST (live mode)
+tmux new-session -d -s mcp-live -x 140 -y 50 \
+  "cd /Users/nathanschram/claude-code-tools/lba/apps/devtools/mcp-audit/main && \
+   source .venv/bin/activate && \
+   mcp-audit collect --platform claude-code --project my-test"
+
+# Step 2: Run AI CLI (in separate terminal or after tmux starts)
+cd /tmp
+claude -p "Test prompt with MCP tools" \
+  --output-format json \
+  --permission-mode acceptEdits \
+  -C /Users/nathanschram/claude-code-tools/lba/apps/devtools/mcp-audit/main
+
+# Step 3: Capture TUI snapshots
+sleep 5
+tmux capture-pane -t mcp-live -p -S - > /tmp/live-tui-capture.txt
+
+# Step 4: Stop mcp-audit
+tmux send-keys -t mcp-live C-c
+sleep 2
+tmux kill-session -t mcp-live
+```
+
+### Batch Mode (For Processing Existing Sessions)
+
+Use batch mode when you already have session files and want to process them:
+
+```bash
+# Process the most recent session
+mcp-audit collect --platform claude-code --batch --latest
+
+# Process a specific session file
+mcp-audit collect --platform claude-code --batch \
+  --session-file ~/.claude/projects/-Users-nathanschram-.../session-id.jsonl
+```
+
+---
+
+## Comparing Native vs mcp-audit Metrics
+
+For accuracy testing, compare mcp-audit session logs against native AI CLI logs.
+
+### Claude Code: Native Session Comparison
+
+```bash
+# Find the mcp-audit session log
+MCP_LOG=$(ls -t ~/.mcp-audit/sessions/claude-code/*.json | head -1)
+
+# Find the native Claude Code session
+NATIVE_LOG=$(ls -t ~/.claude/projects/-Users-nathanschram-claude-code-tools-lba-apps-devtools-mcp-audit-main/*.jsonl | head -1)
+
+# Extract mcp-audit metrics
+echo "=== mcp-audit metrics ==="
+cat "$MCP_LOG" | jq '{
+  cost_usd,
+  input_tokens: .token_usage.input_tokens,
+  output_tokens: .token_usage.output_tokens,
+  accuracy_level: .data_quality.accuracy_level
+}'
+
+# Extract native metrics (last summary line)
+echo "=== Native metrics ==="
+tail -1 "$NATIVE_LOG" | jq '{costUSD, totalTokensIn, totalTokensOut}' 2>/dev/null || \
+  echo "Check native session format"
+```
+
+### Gemini CLI: Native Session Comparison
+
+```bash
+# mcp-audit session
+MCP_LOG=$(ls -t ~/.mcp-audit/sessions/gemini-cli/*.json | head -1)
+
+# Native Gemini session (project hash for mcp-audit)
+GEMINI_HASH="76c62a47a1287071d52c32065e26834b212bf4df1e1551d71ebc39403d65d37b"
+NATIVE_LOG=$(ls -t ~/.gemini/tmp/$GEMINI_HASH/chats/*.json | head -1)
+
+# Compare
+echo "=== mcp-audit ==="
+cat "$MCP_LOG" | jq '.token_usage'
+
+echo "=== Native (message-level tokens) ==="
+cat "$NATIVE_LOG" | jq '[.messages[].tokenCount // 0] | add'
+```
+
+### Codex CLI: Native Session Comparison
+
+```bash
+# mcp-audit session
+MCP_LOG=$(ls -t ~/.mcp-audit/sessions/codex-cli/*.json | head -1)
+
+# Native Codex session
+NATIVE_LOG=$(find ~/.codex/sessions/2025/12 -name "*.jsonl" -mmin -30 | head -1)
+
+# Tool call count comparison (Codex doesn't provide per-call tokens)
+echo "=== mcp-audit tool calls ==="
+cat "$MCP_LOG" | jq '.tool_calls | length'
+
+echo "=== Native tool calls ==="
+grep -c '"type":"tool_call"' "$NATIVE_LOG" || echo "0"
+```
+
+### Expected Accuracy by Platform
+
+| Platform | Metric | Expected Match |
+|----------|--------|----------------|
+| Claude Code | Cost USD | Within 5% |
+| Claude Code | Input/Output tokens | Exact match |
+| Gemini CLI | Token counts | Within 20% (tiktoken estimation) |
+| Codex CLI | Tool call count | Exact match |
+| Codex CLI | Token counts | N/A (no native reference) |
+
+---
+
 ## Related Documentation
 
 - [Claude Code Headless Docs](https://code.claude.com/docs/en/headless) - Official headless mode documentation
@@ -931,32 +1076,47 @@ cd /Users/nathanschram/claude-code-tools/lba/apps/devtools/mcp-audit/main
 source .venv/bin/activate
 pip install -e ".[dev]"
 
+# === Live Monitoring Test (Recommended) ===
+# Step 1: Start mcp-audit FIRST
+tmux new-session -d -s mcp-live -x 140 -y 50 \
+  "source .venv/bin/activate && mcp-audit collect --platform claude-code --project test"
+# Step 2: Run AI CLI
+cd /tmp && claude -p "Test prompt" --output-format json \
+  -C /Users/nathanschram/claude-code-tools/lba/apps/devtools/mcp-audit/main
+# Step 3: Capture and stop
+sleep 5 && tmux capture-pane -t mcp-live -p -S - > /tmp/live-capture.txt
+tmux send-keys -t mcp-live C-c && sleep 2 && tmux kill-session -t mcp-live
+
+# === Batch Processing (Existing Sessions) ===
+mcp-audit collect --platform claude-code --batch --latest
+mcp-audit collect --platform gemini-cli --batch --latest
+mcp-audit collect --platform codex-cli --batch --latest
+
 # === Claude Code CLI Headless Test ===
-# Run from /tmp to avoid session conflicts
 cd /tmp
 claude -p "Test prompt for mcp-audit" \
   --output-format json \
   -C /Users/nathanschram/claude-code-tools/lba/apps/devtools/mcp-audit/main
-cd /Users/nathanschram/claude-code-tools/lba/apps/devtools/mcp-audit/main
-mcp-audit collect --platform claude-code --batch --latest
 
 # === Gemini CLI Headless Test ===
+cd /Users/nathanschram/claude-code-tools/lba/apps/devtools/mcp-audit/main
 gemini "Test prompt for mcp-audit" --yolo --output-format json
-mcp-audit collect --platform gemini-cli --batch --latest
 
 # === Codex CLI Headless Test ===
 codex exec "Test prompt for mcp-audit" --json
-mcp-audit collect --platform codex-cli --batch --latest
 
 # === Verify Results ===
 ls -la ~/.mcp-audit/sessions/
 
+# === Verify v0.6.0 Schema Fields ===
+LATEST=$(ls -t ~/.mcp-audit/sessions/claude-code/*.json | head -1)
+cat "$LATEST" | jq '{schema_version, models_used, data_quality}'
+
 # === TUI Testing with tmux ===
-# Start mcp-audit in tmux and capture TUI output
-tmux new-session -d -s mcp-test -x 120 -y 40 \
+tmux new-session -d -s mcp-test -x 140 -y 50 \
   "source .venv/bin/activate && mcp-audit collect --platform claude-code"
 sleep 3
-tmux capture-pane -t mcp-test -p > /tmp/tui-capture.txt
+tmux capture-pane -t mcp-test -p -S - > /tmp/tui-capture.txt
 cat /tmp/tui-capture.txt
 tmux kill-session -t mcp-test
 ```

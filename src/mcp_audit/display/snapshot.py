@@ -124,6 +124,35 @@ class DisplaySnapshot:
     # Confidence score (0.0-1.0)
     data_quality_confidence: float = 1.0
 
+    # ========================================================================
+    # Multi-Model Tracking (v1.6.0 - task-108.2.4)
+    # ========================================================================
+
+    # List of distinct models used in session
+    models_used: Tuple[str, ...] = field(default_factory=tuple)
+    # Per-model usage: {model: {input_tokens, output_tokens, total_tokens, cost_usd, call_count}}
+    model_usage: Tuple[Tuple[str, int, int, int, int, float, int], ...] = field(
+        default_factory=tuple
+    )
+    # Each tuple is (model, input_tokens, output_tokens, cache_created, cache_read, cost_usd, call_count)
+    # True if len(models_used) > 1
+    is_multi_model: bool = False
+
+    # ========================================================================
+    # Static Cost / Context Tax (v0.6.0 - task-114.3)
+    # ========================================================================
+
+    # Total tokens for MCP server schemas (context tax)
+    static_cost_total: int = 0
+    # Per-server breakdown: tuple of (server_name, tokens)
+    static_cost_by_server: Tuple[Tuple[str, int], ...] = field(default_factory=tuple)
+    # How the estimate was obtained: "known_db", "estimate", "mixed", "none"
+    static_cost_source: str = "none"
+    # Confidence in the estimate (0.0-1.0)
+    static_cost_confidence: float = 0.0
+    # Tokens wasted on unused zombie tools
+    zombie_context_tax: int = 0
+
     @classmethod
     def create(
         cls,
@@ -174,6 +203,18 @@ class DisplaySnapshot:
         accuracy_level: str = "exact",
         token_source: str = "native",
         data_quality_confidence: float = 1.0,
+        # Multi-model tracking (v1.6.0 - task-108.2.4)
+        models_used: List[str] | None = None,
+        model_usage: (
+            List[Tuple[str, int, int, int, int, float, int]] | None
+        ) = None,  # (model, input, output, cache_created, cache_read, cost, calls)
+        is_multi_model: bool = False,
+        # Static cost / context tax (v0.6.0 - task-114.3)
+        static_cost_total: int = 0,
+        static_cost_by_server: List[Tuple[str, int]] | None = None,
+        static_cost_source: str = "none",
+        static_cost_confidence: float = 0.0,
+        zombie_context_tax: int = 0,
     ) -> "DisplaySnapshot":
         """Factory method to create a DisplaySnapshot with proper tuple conversion."""
         # Import version if not provided
@@ -238,4 +279,14 @@ class DisplaySnapshot:
             accuracy_level=accuracy_level,
             token_source=token_source,
             data_quality_confidence=data_quality_confidence,
+            # Multi-model tracking (v1.6.0 - task-108.2.4)
+            models_used=tuple(models_used) if models_used else (),
+            model_usage=tuple(model_usage) if model_usage else (),
+            is_multi_model=is_multi_model,
+            # Static cost / context tax (v0.6.0 - task-114.3)
+            static_cost_total=static_cost_total,
+            static_cost_by_server=(tuple(static_cost_by_server) if static_cost_by_server else ()),
+            static_cost_source=static_cost_source,
+            static_cost_confidence=static_cost_confidence,
+            zombie_context_tax=zombie_context_tax,
         )

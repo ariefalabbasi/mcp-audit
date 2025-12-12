@@ -315,6 +315,10 @@ class TestIntegration:
         config = PricingConfig()
 
         for vendor, models in config.pricing_data.items():
+            # Skip API configuration section (not pricing data)
+            if vendor == "api":
+                continue
+
             for model_name, pricing in models.items():
                 # Each model should have at least input and output
                 assert (

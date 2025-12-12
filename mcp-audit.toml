@@ -169,13 +169,31 @@
 # ]
 
 # ============================================================================
+# Dynamic Pricing API (v0.6.0)
+# ============================================================================
+#
+# Enable dynamic pricing from LiteLLM API for automatic model pricing updates.
+# When enabled, API pricing is checked first, then falls back to TOML config.
+
+[pricing.api]
+# Enable dynamic pricing from LiteLLM API (default: true)
+enabled = true
+
+# Cache TTL in hours - how long to cache pricing data (default: 24)
+cache_ttl_hours = 24
+
+# Offline mode: never fetch from API, only use cache/TOML (default: false)
+# Useful when you want full control over pricing or work offline
+offline_mode = false
+
+# ============================================================================
 # Configuration Metadata
 # ============================================================================
 
 [metadata]
 currency = "USD"
 pricing_unit = "per_million_tokens"
-last_updated = "2025-12-04"
+last_updated = "2025-12-11"
 
 # Exchange rates (optional - for display purposes only)
 [metadata.exchange_rates]

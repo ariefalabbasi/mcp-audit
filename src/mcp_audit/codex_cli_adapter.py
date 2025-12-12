@@ -168,6 +168,12 @@ class CodexCLIAdapter(BaseTracker):
             notes="Session totals native from API; MCP tool breakdown estimated via tiktoken",
         )
 
+        # MCP config path for static cost (v0.6.0 - task-114.2)
+        # Codex CLI uses ~/.codex/config.toml
+        mcp_config = self.codex_dir / "config.toml"
+        if mcp_config.exists():
+            self.set_mcp_config_path(mcp_config)
+
     # ========================================================================
     # Session File Discovery (Task 60.9)
     # ========================================================================
@@ -504,6 +510,26 @@ class CodexCLIAdapter(BaseTracker):
             accuracy_level="estimated",
             token_source="tiktoken",
             data_quality_confidence=0.99,  # tiktoken o200k_base ~99% accuracy
+            # Multi-model tracking (v1.6.0 - task-108.2.4)
+            models_used=self.session.models_used if self.session.models_used else None,
+            model_usage=self._convert_model_usage_for_snapshot(),
+            is_multi_model=len(self.session.models_used) > 1,
+            # Static cost / context tax (v0.6.0 - task-114.3)
+            static_cost_total=(
+                self.session.static_cost.total_tokens if self.session.static_cost else 0
+            ),
+            static_cost_by_server=(
+                list(self.session.static_cost.by_server.items())
+                if self.session.static_cost
+                else None
+            ),
+            static_cost_source=(
+                self.session.static_cost.source if self.session.static_cost else "none"
+            ),
+            static_cost_confidence=(
+                self.session.static_cost.confidence if self.session.static_cost else 0.0
+            ),
+            zombie_context_tax=0,  # TODO: Calculate from schema_analyzer
         )
 
     def _start_file_tracking(self) -> None:
@@ -1029,6 +1055,8 @@ class CodexCLIAdapter(BaseTracker):
             is_estimated=usage.get("is_estimated", False),
             estimation_method=usage.get("estimation_method"),
             estimation_encoding=usage.get("estimation_encoding"),
+            # v1.6.0: Multi-model tracking (task-108.2.3)
+            model=self.detected_model,
         )
 
         # Notify display for Recent Activity feed (task-68.2)

@@ -100,6 +100,11 @@ A real-time MCP token profiler designed to help you understand exactly where you
 - **AI Export:** Export sessions for AI assistant analysis
 - **Data Quality:** Clear accuracy labels (exact/estimated/calls-only)
 
+### 💰 Cost Intelligence (v0.6.0)
+- **Multi-Model Tracking:** Per-model token/cost breakdown when switching models mid-session
+- **Dynamic Pricing:** Auto-fetch current pricing for 2,000+ models via LiteLLM API
+- **Context Tax:** Track MCP schema overhead per server
+
 ### 🔒 Privacy & Integration
 
 - No proxies, no interception, no cloud uploads — all data stays local
@@ -145,13 +150,12 @@ It turns raw MCP telemetry into actionable insights you can use to optimise your
 
 ---
 
-## 🚀 What's New (v0.5.0)
+## 🚀 What's New (v0.6.0)
 
-- **Smell Detection Engine:** Automatically detect 5 efficiency anti-patterns: `HIGH_VARIANCE`, `TOP_CONSUMER`, `HIGH_MCP_SHARE`, `CHATTY`, and `LOW_CACHE_HIT`.
-- **AI Prompt Export:** Export session data for AI analysis with `mcp-audit export ai-prompt` (markdown and JSON formats).
-- **Zombie Tool Detection:** Identify MCP tools defined but never called (wasting schema tokens).
-- **Data Quality Indicators:** Clear accuracy labels (`exact`/`estimated`/`calls-only`) with confidence scores.
-- **Schema v1.5.0:** New `smells`, `zombie_tools`, and `data_quality` blocks in session logs.
+- **Multi-Model Per-Session Tracking:** Sessions that switch between models now show per-model token/cost breakdown.
+- **Dynamic Pricing via LiteLLM:** Auto-fetch current pricing for 2,000+ models with 24h caching.
+- **Schema v1.6.0:** New `models_used`, `model_usage`, and `pricing_source` fields for multi-model intelligence.
+- **Static Cost Foundation:** Infrastructure for tracking MCP schema overhead ("context tax").
 
 See the [Changelog](https://github.com/littlebearapps/mcp-audit/blob/main/CHANGELOG.md) for full version history.
 
@@ -163,7 +167,8 @@ Once you're running `mcp-audit`, watch for these common patterns in your telemet
 
 1. **The "Context Tax" (High Initial Load):**
    - *Signal:* Your session starts with 10k+ tokens before you type a word.
-   - *What this might indicate:* Large `list_tools` schemas can increase context usage on each turn (detailed telemetry coming in v0.6.0+).
+   - *What this might indicate:* Large `list_tools` schemas can increase context usage on each turn.
+   - *v0.6.0 Feature:* A dedicated TUI panel shows per-server static token overhead with confidence scores.
 
 2. **The "Payload Spike" (Unexpected Cost):**
    - *Signal:* A single tool call consumes far more tokens than expected.
@@ -313,7 +318,19 @@ Zombie tools are detected when a configured tool is never called during a sessio
 
 ### Pricing Configuration
 
-Customize model pricing in `mcp-audit.toml`:
+**New in v0.6.0:** MCP Audit fetches current model pricing from the [LiteLLM API](https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json) with 24-hour caching for accurate cost tracking across 2,000+ models.
+
+To use static TOML pricing only:
+
+```toml
+# mcp-audit.toml
+[pricing.api]
+enabled = false      # Disable dynamic pricing
+cache_ttl_hours = 24 # Cache duration (default: 24)
+offline_mode = false # Never fetch, use cache/TOML only
+```
+
+Add custom models or override pricing:
 
 ```toml
 [pricing.claude]
@@ -323,7 +340,7 @@ Customize model pricing in `mcp-audit.toml`:
 "gpt-5.1" = { input = 1.25, output = 10.00 }
 ```
 
-Prices in USD per million tokens. See [Pricing Configuration](https://github.com/littlebearapps/mcp-audit/blob/main/docs/PRICING-CONFIGURATION.md) for all models.
+Prices in USD per million tokens. Run `mcp-audit init` to see current pricing source status.
 
 ---
 
@@ -407,6 +424,22 @@ mcp-audit tokenizer download   # Download Gemma tokenizer (~4MB)
 mcp-audit tokenizer status     # Check tokenizer availability
 ```
 
+### init
+
+Show configuration status and pricing source information.
+
+```bash
+mcp-audit init                 # Display config status, pricing source, and cache info
+```
+
+```
+Output includes:
+  - Configuration file location (if found)
+  - Pricing source: api, cache, toml, or built-in
+  - LiteLLM cache status and expiry
+  - Tokenizer availability
+```
+
 ### Upgrade
 
 ```bash
@@ -466,10 +499,12 @@ Claude Code provides native token counts directly from Anthropic's servers, so n
 
 <br>
 
-**All data stays on your machine:**
+**All your usage data stays on your machine:**
 - Session data: `~/.mcp-audit/sessions/`
-- Configuration: `~/.mcp-audit/mcp-audit.toml`
-- No network requests, no telemetry
+- Configuration: `./mcp-audit.toml` or `~/.mcp-audit/mcp-audit.toml`
+- Pricing cache: `~/.mcp-audit/pricing-cache.json`
+
+**Network access:** By default, mcp-audit fetches model pricing from the [LiteLLM pricing API](https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json) (cached 24h). No usage data is sent. To disable: set `[pricing.api] enabled = false` in config.
 
 Only token counts and tool names are logged—**prompts and responses are never stored**.
 
@@ -502,7 +537,7 @@ Yes. MCP Audit tracks schema weight, per-tool usage, and payload spikes that con
 |----------|-------------|
 | [Features & Benefits](https://github.com/littlebearapps/mcp-audit/blob/main/docs/FEATURES-BENEFITS.md) | Detailed feature guide |
 | [Architecture](https://github.com/littlebearapps/mcp-audit/blob/main/docs/architecture.md) | System design and adapters |
-| [Data Contract](https://github.com/littlebearapps/mcp-audit/blob/main/docs/data-contract.md) | Schema v1.5.0 format |
+| [Data Contract](https://github.com/littlebearapps/mcp-audit/blob/main/docs/data-contract.md) | Schema v1.6.0 format |
 | [Privacy & Security](https://github.com/littlebearapps/mcp-audit/blob/main/docs/privacy-security.md) | Data handling policies |
 | [Manual Tokenizer Install](https://github.com/littlebearapps/mcp-audit/blob/main/docs/manual-tokenizer-install.md) | For firewalled networks |
 | [Changelog](https://github.com/littlebearapps/mcp-audit/blob/main/CHANGELOG.md) | Version history |
@@ -512,14 +547,12 @@ Yes. MCP Audit tracks schema weight, per-tool usage, and payload spikes that con
 
 ## 🗺️ Roadmap
 
-**Current**: v0.5.x — Insight Layer (Smell Detection, AI Export, Data Quality)
+**Current**: v0.6.x — Multi-Model Intelligence (Per-Model Tracking, Dynamic Pricing, Schema v1.6.0)
 
-**Coming in v0.6.0:**
-- Ollama CLI adapter — expand platform support
-- Multi-model per-session tracking — sessions that switch between models
-- Dynamic pricing via LiteLLM — auto-fetch latest model pricing
+**Coming in v0.6.1:**
+- Ollama CLI adapter — expand platform support via API proxy
 
-**Coming in v0.7.0+:**
+**Coming in v0.7.0:**
 - TUI session browser — explore past sessions visually
 - Smells panel in live TUI — see anti-patterns as they happen
 - Cross-session smell aggregation — find patterns across sessions

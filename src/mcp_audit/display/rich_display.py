@@ -109,13 +109,25 @@ class RichDisplay(DisplayAdapter):
         """Build the dashboard layout."""
         layout = Layout()
 
-        layout.split_column(
+        # Build layout with conditional context tax panel
+        panels = [
             Layout(self._build_header(snapshot), name="header", size=6),
             Layout(self._build_tokens(snapshot), name="tokens", size=8),
             Layout(self._build_tools(snapshot), name="tools", size=12),
-            Layout(self._build_activity(), name="activity", size=6),
-            Layout(self._build_footer(), name="footer", size=1),
+        ]
+
+        # Add context tax panel if static_cost data is available
+        if snapshot.static_cost_total > 0:
+            panels.append(Layout(self._build_context_tax(snapshot), name="context_tax", size=6))
+
+        panels.extend(
+            [
+                Layout(self._build_activity(), name="activity", size=6),
+                Layout(self._build_footer(), name="footer", size=1),
+            ]
         )
+
+        layout.split_column(*panels)
 
         return layout
 
@@ -140,8 +152,29 @@ class RichDisplay(DisplayAdapter):
         header_text.append(f"  Started: {started_str}", style=self.theme.dim_text)
         header_text.append(f"  Duration: {duration}", style=self.theme.dim_text)
 
-        # Model name
-        if snapshot.model_name and snapshot.model_name != "Unknown Model":
+        # Model name (v1.6.0: multi-model support)
+        if snapshot.is_multi_model and snapshot.model_usage:
+            # Multi-model: show count and breakdown
+            header_text.append(
+                f"\nModels ({len(snapshot.models_used)}): ", style=self.theme.success
+            )
+            # Sort models by total_tokens descending for display
+            sorted_models = sorted(
+                snapshot.model_usage, key=lambda m: m[3], reverse=True  # m[3] = total_tokens
+            )
+            total_tokens = sum(m[3] for m in sorted_models)
+            model_strs = []
+            for m in sorted_models[:3]:  # Show top 3 models
+                model_name = m[0]
+                model_tokens = m[3]
+                pct = (model_tokens / total_tokens * 100) if total_tokens > 0 else 0
+                # Truncate long model names
+                display_name = model_name[:20] + "..." if len(model_name) > 20 else model_name
+                model_strs.append(f"{display_name} ({pct:.0f}%)")
+            header_text.append(", ".join(model_strs), style=self.theme.success)
+            if len(sorted_models) > 3:
+                header_text.append(f" +{len(sorted_models) - 3} more", style=self.theme.dim_text)
+        elif snapshot.model_name and snapshot.model_name != "Unknown Model":
             header_text.append(f"\nModel: {snapshot.model_name}", style=self.theme.success)
         elif snapshot.model_id:
             header_text.append(f"\nModel: {snapshot.model_id}", style=self.theme.success)
@@ -418,6 +451,57 @@ class RichDisplay(DisplayAdapter):
         else:
             return ""
 
+    def _build_context_tax(self, snapshot: DisplaySnapshot) -> Panel:
+        """Build context tax panel showing MCP schema overhead (v0.6.0 - task-114.3)."""
+        content = Text()
+
+        # Total schema tokens
+        total = snapshot.static_cost_total
+        content.append("Total Schema Tokens: ", style=self.theme.dim_text)
+        content.append(f"{total:,}\n", style=f"bold {self.theme.warning}")
+
+        # Source and confidence
+        source = snapshot.static_cost_source
+        confidence = snapshot.static_cost_confidence * 100
+        content.append(f"Source: {source} ", style=self.theme.dim_text)
+        content.append(f"({confidence:.0f}% confidence)\n", style=self.theme.dim_text)
+
+        # Per-server breakdown (if available)
+        if snapshot.static_cost_by_server:
+            content.append("\nBy Server:\n", style=self.theme.dim_text)
+            # Sort servers by tokens descending
+            sorted_servers = sorted(
+                snapshot.static_cost_by_server, key=lambda x: x[1], reverse=True
+            )
+            for server_name, tokens in sorted_servers[:5]:  # Show top 5
+                pct = (tokens / total * 100) if total > 0 else 0
+                # Truncate long server names
+                display_name = server_name[:16] + ".." if len(server_name) > 18 else server_name
+                content.append(f"  {display_name:<18}", style=self.theme.primary_text)
+                content.append(f"{tokens:>6,}", style=f"bold {self.theme.primary_text}")
+                content.append(f"  ({pct:.0f}%)\n", style=self.theme.dim_text)
+            if len(sorted_servers) > 5:
+                content.append(
+                    f"  +{len(sorted_servers) - 5} more servers\n",
+                    style=self.theme.dim_text,
+                )
+
+        # Zombie context tax (unused tools overhead)
+        if snapshot.zombie_context_tax > 0:
+            warning_emoji = ascii_emoji("⚠")
+            content.append(f"\n{warning_emoji} Zombie Tax: ", style=f"bold {self.theme.warning}")
+            content.append(
+                f"{snapshot.zombie_context_tax:,} tokens (unused tools)",
+                style=self.theme.warning,
+            )
+
+        return Panel(
+            content,
+            title="Context Tax",
+            border_style=self.theme.mcp_border,
+            box=self.box_style,
+        )
+
     def _build_activity(self) -> Panel:
         """Build recent activity panel."""
         if not self.recent_events:
@@ -493,8 +577,26 @@ class RichDisplay(DisplayAdapter):
             f"[bold {self.theme.success}]Session Complete![/]\n",
         ]
 
-        # Model info
-        if snapshot.model_name and snapshot.model_name != "Unknown Model":
+        # Model info (v1.6.0: multi-model support)
+        if snapshot.is_multi_model and snapshot.model_usage:
+            summary_parts.append(f"[bold]Models[/bold] ({len(snapshot.models_used)}):\n")
+            # Sort by total_tokens descending
+            sorted_models = sorted(
+                snapshot.model_usage, key=lambda m: m[3], reverse=True  # m[3] = total_tokens
+            )
+            for model_data in sorted_models:
+                # model_data: (model, input, output, total_tokens, cache_read, cost_usd, call_count)
+                model_name = model_data[0]
+                total_tokens = model_data[3]
+                cost_usd = model_data[5]
+                call_count = model_data[6]
+                # Truncate long model names
+                display_name = model_name[:25] + "..." if len(model_name) > 25 else model_name
+                summary_parts.append(
+                    f"  {display_name}: {total_tokens:,} tokens, "
+                    f"${cost_usd:.4f}, {call_count} calls\n"
+                )
+        elif snapshot.model_name and snapshot.model_name != "Unknown Model":
             summary_parts.append(f"Model: {snapshot.model_name}\n")
 
         # Duration and rate stats
@@ -607,6 +709,28 @@ class RichDisplay(DisplayAdapter):
             if snapshot.git_status == "dirty":
                 git_info += " (uncommitted changes)"
             summary_parts.append(f"\n{git_info}\n")
+
+        # Context tax section (v0.6.0 - task-114.3)
+        if snapshot.static_cost_total > 0:
+            summary_parts.append("\n[bold]Context Tax[/bold] (MCP schema overhead):\n")
+            summary_parts.append(f"  Total: {snapshot.static_cost_total:,} tokens\n")
+            summary_parts.append(
+                f"  Source: {snapshot.static_cost_source} "
+                f"({snapshot.static_cost_confidence * 100:.0f}% confidence)\n"
+            )
+            # Show per-server breakdown if available
+            if snapshot.static_cost_by_server:
+                top_static_servers = sorted(
+                    snapshot.static_cost_by_server, key=lambda x: x[1], reverse=True
+                )[:3]
+                server_strs = [f"{s[0]}({s[1]:,})" for s in top_static_servers]
+                summary_parts.append(f"  Top: {', '.join(server_strs)}\n")
+            # Show zombie tax if present
+            if snapshot.zombie_context_tax > 0:
+                warning_emoji = ascii_emoji("⚠")
+                summary_parts.append(
+                    f"  {warning_emoji} Zombie tax: {snapshot.zombie_context_tax:,} tokens (unused tools)\n"
+                )
 
         summary_parts.append(f"\nSchema version: {SCHEMA_VERSION}")
 

@@ -201,6 +201,12 @@ class ClaudeCodeAdapter(BaseTracker):
             notes="Native token counts from Claude API response",
         )
 
+        # MCP config path for static cost (v0.6.0 - task-114.2)
+        # Claude Code uses .mcp.json in the working directory
+        mcp_config = Path.cwd() / ".mcp.json"
+        if mcp_config.exists():
+            self.set_mcp_config_path(mcp_config)
+
         # Source file tracking (task-50)
         self._active_source_files: Set[str] = set()
 
@@ -738,6 +744,26 @@ class ClaudeCodeAdapter(BaseTracker):
             accuracy_level="exact",
             token_source="native",
             data_quality_confidence=1.0,
+            # Multi-model tracking (v1.6.0 - task-108.2.4)
+            models_used=self.session.models_used if self.session.models_used else None,
+            model_usage=self._convert_model_usage_for_snapshot(),
+            is_multi_model=len(self.session.models_used) > 1,
+            # Static cost / context tax (v0.6.0 - task-114.3)
+            static_cost_total=(
+                self.session.static_cost.total_tokens if self.session.static_cost else 0
+            ),
+            static_cost_by_server=(
+                list(self.session.static_cost.by_server.items())
+                if self.session.static_cost
+                else None
+            ),
+            static_cost_source=(
+                self.session.static_cost.source if self.session.static_cost else "none"
+            ),
+            static_cost_confidence=(
+                self.session.static_cost.confidence if self.session.static_cost else 0.0
+            ),
+            zombie_context_tax=0,  # TODO: Calculate from schema_analyzer
         )
 
     # ========================================================================
@@ -847,6 +873,8 @@ class ClaudeCodeAdapter(BaseTracker):
             duration_ms=0,  # Claude Code doesn't provide duration
             content_hash=content_hash,
             platform_data=platform_data,
+            # v1.6.0: Multi-model tracking (task-108.2.3)
+            model=self.detected_model,
         )
 
         # Notify display of MCP event

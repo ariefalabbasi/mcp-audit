@@ -331,6 +331,12 @@ class GeminiCLIAdapter(BaseTracker):
             ),
         )
 
+        # MCP config path for static cost (v0.6.0 - task-114.2)
+        # Gemini CLI uses ~/.gemini/settings.json
+        mcp_config = self.gemini_dir / "settings.json"
+        if mcp_config.exists():
+            self.set_mcp_config_path(mcp_config)
+
     def _extract_files_from_tool_params(self, tool_name: str, params: Dict[str, Any]) -> None:
         """
         Extracts file paths from tool parameters and adds them to _current_source_files.
@@ -821,6 +827,26 @@ class GeminiCLIAdapter(BaseTracker):
             data_quality_confidence=(
                 1.0 if self._token_estimator.method_name == "sentencepiece" else 0.95
             ),
+            # Multi-model tracking (v1.6.0 - task-108.2.4)
+            models_used=self.session.models_used if self.session.models_used else None,
+            model_usage=self._convert_model_usage_for_snapshot(),
+            is_multi_model=len(self.session.models_used) > 1,
+            # Static cost / context tax (v0.6.0 - task-114.3)
+            static_cost_total=(
+                self.session.static_cost.total_tokens if self.session.static_cost else 0
+            ),
+            static_cost_by_server=(
+                list(self.session.static_cost.by_server.items())
+                if self.session.static_cost
+                else None
+            ),
+            static_cost_source=(
+                self.session.static_cost.source if self.session.static_cost else "none"
+            ),
+            static_cost_confidence=(
+                self.session.static_cost.confidence if self.session.static_cost else 0.0
+            ),
+            zombie_context_tax=0,  # TODO: Calculate from schema_analyzer
         )
 
     def parse_event(self, event_data: Any) -> Optional[Tuple[str, Dict[str, Any]]]:
@@ -1153,6 +1179,8 @@ class GeminiCLIAdapter(BaseTracker):
                 is_estimated=usage.get("is_estimated", False),
                 estimation_method=usage.get("estimation_method"),
                 estimation_encoding=usage.get("estimation_encoding"),
+                # v1.6.0: Multi-model tracking (task-108.2.3)
+                model=self.detected_model,
             )
 
             # Notify display of built-in tool event (task-70.3)
@@ -1192,6 +1220,8 @@ class GeminiCLIAdapter(BaseTracker):
             is_estimated=usage.get("is_estimated", False),
             estimation_method=usage.get("estimation_method"),
             estimation_encoding=usage.get("estimation_encoding"),
+            # v1.6.0: Multi-model tracking (task-108.2.3)
+            model=self.detected_model,
         )
 
         # Notify display of MCP event (task-70.3)

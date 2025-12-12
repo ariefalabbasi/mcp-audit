@@ -4,10 +4,10 @@ This document outlines the planned development direction for MCP Audit. For comp
 
 ## Current Status
 
-**Version**: v0.5.0
-**Stage**: Insight Layer — Smell Detection, AI Export, Data Quality
+**Version**: v0.6.0
+**Stage**: Multi-Model Intelligence — Per-Model Tracking, Dynamic Pricing, Schema v1.6.0
 
-MCP Audit provides stable support for Claude Code, Codex CLI, and Gemini CLI. v0.5.0 introduces efficiency anti-pattern detection, AI-exportable session data, and data quality indicators.
+MCP Audit provides stable support for Claude Code, Codex CLI, and Gemini CLI. v0.6.0 introduces multi-model per-session tracking, dynamic pricing via LiteLLM API, and the foundation for static cost tracking.
 
 ---
 
@@ -32,25 +32,43 @@ The foundation for efficiency insights and AI-assisted analysis.
 
 ---
 
-## v0.6.0 — Platform Layer
+## ✅ v0.6.0 — Multi-Model Intelligence (Released)
 
 **Theme:** "Track Everything"
 
-Expands platform support and introduces multi-model tracking.
+Multi-model tracking and dynamic pricing infrastructure.
 
-- **Ollama CLI Adapter** — Local model tracking with calls-only mode
-- **Multi-Model Tracking** — Per-model tokens/costs when switching models mid-session
-- **Dynamic Pricing** — LiteLLM pricing API with TOML fallback and caching
-- **Static Cost Tracking** — Measure MCP schema "context tax"
-- **Schema v1.6.0** — `models_used`, `model_usage`, `static_cost` blocks
+- ✅ **Multi-Model Tracking** — Per-model tokens/costs when switching models mid-session
+- ✅ **Dynamic Pricing** — LiteLLM pricing API (2,000+ models) with 24h caching and TOML fallback
+- ✅ **Static Cost Foundation** — Infrastructure for MCP schema "context tax" (full impl deferred)
+- ✅ **Schema v1.6.0** — `models_used`, `model_usage`, `pricing_source` blocks
+
+**Note:** Ollama CLI Adapter moved to v0.6.1 (requires API proxy approach).
+
+**Success Metrics:**
+- ✅ Sessions with model switches show per-model breakdown
+- ✅ Pricing stays current via LiteLLM API
+- ✅ 3 platforms supported: Claude Code, Codex CLI, Gemini CLI
+
+➡️ [View Milestone](https://github.com/littlebearapps/mcp-audit/milestone/2)
+
+---
+
+## v0.6.1 — Ollama CLI Support
+
+**Theme:** "Local Model Tracking"
+
+Adds support for Ollama CLI via API proxy approach.
+
+- **Ollama CLI Adapter** — Local model tracking via API proxy interception
+- **Calls-Only Tracking** — Track tool calls (no per-tool tokens from Ollama)
+- **Zero-Cost Sessions** — Sessions with $0 cost (local models)
 
 **Success Metrics:**
 - Ollama users can track local model sessions
-- Sessions with model switches show per-model breakdown
-- Pricing stays current via LiteLLM API
 - 4 platforms supported: Claude Code, Codex CLI, Gemini CLI, Ollama CLI
 
-➡️ [View Milestone](https://github.com/littlebearapps/mcp-audit/milestone/2)
+➡️ [View Milestone](https://github.com/littlebearapps/mcp-audit/milestone/7)
 
 ---
 

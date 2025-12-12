@@ -1171,21 +1171,21 @@ class TestSessionV150Fields:
         assert data["zombie_tools"] == {}
 
 
-class TestSchemaVersion150:
-    """Tests for schema version 1.5.0 (task-103.3)"""
+class TestSchemaVersion160:
+    """Tests for schema version 1.6.0 (task-108.5)"""
 
-    def test_schema_version_is_1_5_0(self) -> None:
-        """Test SCHEMA_VERSION constant is 1.5.0"""
-        assert SCHEMA_VERSION == "1.5.0"
+    def test_schema_version_is_1_6_0(self) -> None:
+        """Test SCHEMA_VERSION constant is 1.6.0"""
+        assert SCHEMA_VERSION == "1.6.0"
 
-    def test_session_uses_schema_version_1_5_0(self) -> None:
-        """Test new Session objects use schema v1.5.0"""
+    def test_session_uses_schema_version_1_6_0(self) -> None:
+        """Test new Session objects use schema v1.6.0"""
         session = Session(project="test", platform="test", session_id="test-123")
 
-        assert session.schema_version == "1.5.0"
+        assert session.schema_version == "1.6.0"
 
-    def test_tracker_saves_with_schema_1_5_0(self, tmp_path) -> None:
-        """Test saved session files have schema v1.5.0 in _file header"""
+    def test_tracker_saves_with_schema_1_6_0(self, tmp_path) -> None:
+        """Test saved session files have schema v1.6.0 in _file header"""
         import json
 
         tracker = ConcreteTestTracker()
@@ -1200,7 +1200,7 @@ class TestSchemaVersion150:
         with open(session_files[0]) as f:
             data = json.load(f)
 
-        assert data["_file"]["schema_version"] == "1.5.0"
+        assert data["_file"]["schema_version"] == "1.6.0"
 
 
 class TestDataQualityPerPlatform:
@@ -1283,6 +1283,720 @@ class TestDataQualityPerPlatform:
         assert "data_quality" in data
         assert data["data_quality"]["accuracy_level"] == "estimated"
         assert data["data_quality"]["token_source"] == "tiktoken"
+
+
+class TestDataQualityPricingFields:
+    """Tests for v1.6.0 pricing fields in DataQuality (task-108.3.4)"""
+
+    def test_data_quality_has_pricing_fields(self) -> None:
+        """Test DataQuality has pricing_source and pricing_freshness fields"""
+        from mcp_audit.base_tracker import DataQuality
+
+        dq = DataQuality()
+        assert hasattr(dq, "pricing_source")
+        assert hasattr(dq, "pricing_freshness")
+        assert dq.pricing_source == "defaults"
+        assert dq.pricing_freshness == "unknown"
+
+    def test_data_quality_pricing_to_dict(self) -> None:
+        """Test pricing fields are included in to_dict()"""
+        from mcp_audit.base_tracker import DataQuality
+
+        dq = DataQuality(
+            accuracy_level="exact",
+            token_source="native",
+            pricing_source="api",
+            pricing_freshness="fresh",
+        )
+
+        result = dq.to_dict()
+        assert result["pricing_source"] == "api"
+        assert result["pricing_freshness"] == "fresh"
+
+    def test_finalize_session_sets_pricing_from_config(self, tmp_path, monkeypatch) -> None:
+        """Test finalize_session() populates pricing fields from pricing_config"""
+        from mcp_audit.codex_cli_adapter import CodexCLIAdapter
+
+        # Create mock Codex directory structure for CI
+        mock_codex_dir = tmp_path / ".codex"
+        mock_codex_dir.mkdir(parents=True)
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+        adapter = CodexCLIAdapter(project="test")
+
+        # Adapter has _pricing_config and data_quality should exist
+        assert hasattr(adapter, "_pricing_config")
+        assert adapter.session.data_quality is not None
+
+        # Finalize session - this should set pricing fields
+        session = adapter.finalize_session()
+
+        # Check pricing fields were set (values depend on pricing_config state)
+        assert session.data_quality.pricing_source in ["api", "cache", "file", "defaults"]
+        assert session.data_quality.pricing_freshness in ["fresh", "cached", "stale", "unknown"]
+
+    def test_data_quality_pricing_serializes_to_json(self, tmp_path, monkeypatch) -> None:
+        """Test pricing fields appear in saved session JSON"""
+        import json
+
+        from mcp_audit.codex_cli_adapter import CodexCLIAdapter
+
+        # Create mock Codex directory structure for CI
+        mock_codex_dir = tmp_path / ".codex"
+        mock_codex_dir.mkdir(parents=True)
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+        adapter = CodexCLIAdapter(project="test")
+        adapter.finalize_session()
+        adapter.save_session(tmp_path)
+
+        # Load the saved session file
+        session_files = list(adapter.session_dir.glob("*.json"))
+        assert len(session_files) == 1
+
+        with open(session_files[0]) as f:
+            data = json.load(f)
+
+        # Check pricing fields in serialized data_quality
+        assert "data_quality" in data
+        assert "pricing_source" in data["data_quality"]
+        assert "pricing_freshness" in data["data_quality"]
+
+
+class TestMultiModelDataStructures:
+    """Tests for v1.6.0 multi-model tracking data structures (task-108.2.2)"""
+
+    def test_call_has_model_field(self) -> None:
+        """Test Call dataclass has model field"""
+        from mcp_audit.base_tracker import Call
+
+        call = Call()
+        assert hasattr(call, "model")
+        assert call.model is None  # Default is None
+
+    def test_call_model_can_be_set(self) -> None:
+        """Test Call.model can be set"""
+        from mcp_audit.base_tracker import Call
+
+        call = Call(model="claude-sonnet-4-20250514")
+        assert call.model == "claude-sonnet-4-20250514"
+
+    def test_call_to_dict_includes_model_when_set(self) -> None:
+        """Test Call.to_dict() includes model when present"""
+        from mcp_audit.base_tracker import Call
+
+        call = Call(
+            index=1,
+            tool_name="mcp__zen__chat",
+            server="zen",
+            model="claude-opus-4-5-20251101",
+        )
+        result = call.to_dict()
+        assert result["model"] == "claude-opus-4-5-20251101"
+
+    def test_call_to_dict_excludes_model_when_none(self) -> None:
+        """Test Call.to_dict() excludes model when None (file size optimization)"""
+        from mcp_audit.base_tracker import Call
+
+        call = Call(
+            index=1,
+            tool_name="mcp__zen__chat",
+            server="zen",
+            model=None,
+        )
+        result = call.to_dict()
+        assert "model" not in result
+
+    def test_session_has_models_used_field(self) -> None:
+        """Test Session has models_used field"""
+        from mcp_audit.base_tracker import Session
+
+        session = Session()
+        assert hasattr(session, "models_used")
+        assert session.models_used == []
+
+    def test_session_has_model_usage_field(self) -> None:
+        """Test Session has model_usage field"""
+        from mcp_audit.base_tracker import Session
+
+        session = Session()
+        assert hasattr(session, "model_usage")
+        assert session.model_usage == {}
+
+    def test_model_usage_dataclass(self) -> None:
+        """Test ModelUsage dataclass exists and has expected fields"""
+        from mcp_audit.base_tracker import ModelUsage
+
+        usage = ModelUsage(
+            model="claude-sonnet-4-20250514",
+            input_tokens=10000,
+            output_tokens=5000,
+            cache_created_tokens=1000,
+            cache_read_tokens=500,
+            total_tokens=16500,
+            cost_usd=0.05,
+            call_count=3,
+        )
+        assert usage.model == "claude-sonnet-4-20250514"
+        assert usage.input_tokens == 10000
+        assert usage.output_tokens == 5000
+        assert usage.cache_created_tokens == 1000
+        assert usage.cache_read_tokens == 500
+        assert usage.total_tokens == 16500
+        assert usage.cost_usd == 0.05
+        assert usage.call_count == 3
+
+    def test_model_usage_to_dict(self) -> None:
+        """Test ModelUsage.to_dict() returns expected format"""
+        from mcp_audit.base_tracker import ModelUsage
+
+        usage = ModelUsage(
+            model="claude-sonnet-4-20250514",
+            input_tokens=10000,
+            output_tokens=5000,
+            cost_usd=0.05,
+            call_count=3,
+        )
+        result = usage.to_dict()
+        assert result == {
+            "input_tokens": 10000,
+            "output_tokens": 5000,
+            "cache_created_tokens": 0,
+            "cache_read_tokens": 0,
+            "total_tokens": 0,
+            "cost_usd": 0.05,
+            "call_count": 3,
+        }
+        # Note: model is NOT in to_dict() - it's used as dict key in Session.model_usage
+
+    def test_session_to_dict_includes_models_used(self) -> None:
+        """Test Session.to_dict() includes models_used in session block"""
+        from mcp_audit.base_tracker import Session
+
+        session = Session()
+        session.models_used = ["claude-sonnet-4-20250514", "claude-opus-4-5-20251101"]
+        result = session.to_dict()
+        assert result["session"]["models_used"] == [
+            "claude-sonnet-4-20250514",
+            "claude-opus-4-5-20251101",
+        ]
+
+    def test_session_to_dict_includes_model_usage(self) -> None:
+        """Test Session.to_dict() includes model_usage block when populated"""
+        from mcp_audit.base_tracker import ModelUsage, Session
+
+        session = Session()
+        session.model_usage = {
+            "claude-sonnet-4-20250514": ModelUsage(
+                model="claude-sonnet-4-20250514",
+                input_tokens=10000,
+                output_tokens=5000,
+                cost_usd=0.05,
+                call_count=3,
+            ),
+            "claude-opus-4-5-20251101": ModelUsage(
+                model="claude-opus-4-5-20251101",
+                input_tokens=5000,
+                output_tokens=2000,
+                cost_usd=0.15,
+                call_count=1,
+            ),
+        }
+        result = session.to_dict()
+        assert "model_usage" in result
+        assert "claude-sonnet-4-20250514" in result["model_usage"]
+        assert result["model_usage"]["claude-sonnet-4-20250514"]["call_count"] == 3
+        assert result["model_usage"]["claude-opus-4-5-20251101"]["cost_usd"] == 0.15
+
+    def test_session_to_dict_excludes_model_usage_when_empty(self) -> None:
+        """Test Session.to_dict() excludes model_usage when empty"""
+        from mcp_audit.base_tracker import Session
+
+        session = Session()
+        session.model_usage = {}  # Empty
+        result = session.to_dict()
+        assert "model_usage" not in result
+
+    def test_session_to_dict_models_used_empty_list(self) -> None:
+        """Test Session.to_dict() includes empty models_used when not populated"""
+        from mcp_audit.base_tracker import Session
+
+        session = Session()
+        result = session.to_dict()
+        assert result["session"]["models_used"] == []
+
+
+class TestMultiModelAggregation:
+    """Tests for v1.6.0 multi-model aggregation in finalize_session() (task-108.2.3)"""
+
+    def test_record_tool_call_accepts_model_param(self, tmp_path, monkeypatch) -> None:
+        """Test record_tool_call accepts model parameter"""
+        from mcp_audit.codex_cli_adapter import CodexCLIAdapter
+
+        mock_codex_dir = tmp_path / ".codex"
+        mock_codex_dir.mkdir(parents=True)
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+        adapter = CodexCLIAdapter(project="test")
+        adapter.record_tool_call(
+            tool_name="mcp__zen__chat",
+            input_tokens=1000,
+            output_tokens=500,
+            model="gpt-5.1",
+        )
+        # Verify call was recorded with model
+        server_session = adapter.server_sessions.get("zen")
+        assert server_session is not None
+        tool_stats = server_session.tools.get("mcp__zen__chat")
+        assert tool_stats is not None
+        assert tool_stats.call_history[0].model == "gpt-5.1"
+
+    def test_finalize_session_aggregates_by_model(self, tmp_path, monkeypatch) -> None:
+        """Test finalize_session aggregates tokens by model"""
+        from mcp_audit.codex_cli_adapter import CodexCLIAdapter
+
+        mock_codex_dir = tmp_path / ".codex"
+        mock_codex_dir.mkdir(parents=True)
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+        adapter = CodexCLIAdapter(project="test")
+        # Record calls with different models
+        adapter.record_tool_call(
+            tool_name="mcp__zen__chat",
+            input_tokens=1000,
+            output_tokens=500,
+            model="gpt-5.1",
+        )
+        adapter.record_tool_call(
+            tool_name="mcp__zen__thinkdeep",
+            input_tokens=2000,
+            output_tokens=1000,
+            model="gpt-5.1",
+        )
+        adapter.record_tool_call(
+            tool_name="mcp__brave-search__web",
+            input_tokens=500,
+            output_tokens=200,
+            model="claude-sonnet-4",
+        )
+
+        session = adapter.finalize_session()
+
+        # Should have 2 models
+        assert len(session.models_used) == 2
+        assert "gpt-5.1" in session.models_used
+        assert "claude-sonnet-4" in session.models_used
+
+        # Check aggregation for gpt-5.1
+        assert "gpt-5.1" in session.model_usage
+        gpt_usage = session.model_usage["gpt-5.1"]
+        assert gpt_usage.input_tokens == 3000  # 1000 + 2000
+        assert gpt_usage.output_tokens == 1500  # 500 + 1000
+        assert gpt_usage.call_count == 2
+
+        # Check aggregation for claude-sonnet-4
+        assert "claude-sonnet-4" in session.model_usage
+        claude_usage = session.model_usage["claude-sonnet-4"]
+        assert claude_usage.input_tokens == 500
+        assert claude_usage.output_tokens == 200
+        assert claude_usage.call_count == 1
+
+    def test_finalize_session_fallback_to_session_model(self, tmp_path, monkeypatch) -> None:
+        """Test finalize_session uses session model when call model is None"""
+        from mcp_audit.codex_cli_adapter import CodexCLIAdapter
+
+        mock_codex_dir = tmp_path / ".codex"
+        mock_codex_dir.mkdir(parents=True)
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+        adapter = CodexCLIAdapter(project="test")
+        adapter.session.model = "default-model"
+        # Record call without explicit model
+        adapter.record_tool_call(
+            tool_name="mcp__zen__chat",
+            input_tokens=1000,
+            output_tokens=500,
+            # model=None (default)
+        )
+
+        session = adapter.finalize_session()
+
+        # Should use session model as fallback
+        assert "default-model" in session.models_used
+        assert "default-model" in session.model_usage
+        assert session.model_usage["default-model"].call_count == 1
+
+    def test_finalize_session_fallback_to_unknown(self, tmp_path, monkeypatch) -> None:
+        """Test finalize_session uses 'unknown' when no model info available"""
+        from mcp_audit.codex_cli_adapter import CodexCLIAdapter
+
+        mock_codex_dir = tmp_path / ".codex"
+        mock_codex_dir.mkdir(parents=True)
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+        adapter = CodexCLIAdapter(project="test")
+        adapter.session.model = ""  # Empty session model
+        adapter.record_tool_call(
+            tool_name="mcp__zen__chat",
+            input_tokens=1000,
+            output_tokens=500,
+            # model=None (default)
+        )
+
+        session = adapter.finalize_session()
+
+        # Should use "unknown" as fallback
+        assert "unknown" in session.models_used
+        assert "unknown" in session.model_usage
+
+    def test_models_used_includes_session_model_no_tool_calls(self, tmp_path, monkeypatch) -> None:
+        """Test models_used includes session model even with no MCP tool calls (task-123)"""
+        from mcp_audit.codex_cli_adapter import CodexCLIAdapter
+
+        mock_codex_dir = tmp_path / ".codex"
+        mock_codex_dir.mkdir(parents=True)
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+        adapter = CodexCLIAdapter(project="test")
+        adapter.session.model = "gpt-5.1"
+
+        # Finalize WITHOUT recording any tool calls
+        session = adapter.finalize_session()
+
+        # models_used should contain the session model, even with no MCP calls
+        assert len(session.models_used) == 1
+        assert "gpt-5.1" in session.models_used
+        # model_usage will be empty since no actual calls tracked tokens
+        assert session.model_usage == {}
+
+    def test_models_used_includes_session_model_and_tool_models(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """Test models_used includes both session model and tool call models (task-123)"""
+        from mcp_audit.codex_cli_adapter import CodexCLIAdapter
+
+        mock_codex_dir = tmp_path / ".codex"
+        mock_codex_dir.mkdir(parents=True)
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+        adapter = CodexCLIAdapter(project="test")
+        adapter.session.model = "session-default-model"
+
+        # Record a call with a DIFFERENT model
+        adapter.record_tool_call(
+            tool_name="mcp__zen__chat",
+            input_tokens=1000,
+            output_tokens=500,
+            model="tool-specific-model",
+        )
+
+        session = adapter.finalize_session()
+
+        # models_used should contain BOTH the session model and the tool call model
+        assert len(session.models_used) == 2
+        assert "session-default-model" in session.models_used
+        assert "tool-specific-model" in session.models_used
+
+    def test_single_model_session_backward_compatible(self, tmp_path, monkeypatch) -> None:
+        """Test single-model sessions work correctly (backward compatibility)"""
+        from mcp_audit.codex_cli_adapter import CodexCLIAdapter
+
+        # Create mock Codex directory for CI
+        mock_codex_dir = tmp_path / ".codex"
+        mock_codex_dir.mkdir(parents=True)
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+        adapter = CodexCLIAdapter(project="test")
+        adapter.detected_model = "claude-opus-4-5-20251101"
+        adapter.session.model = adapter.detected_model
+
+        # Record multiple calls, all same model
+        for i in range(5):
+            adapter.record_tool_call(
+                tool_name=f"mcp__zen__tool{i}",
+                input_tokens=100 * (i + 1),
+                output_tokens=50 * (i + 1),
+                model=adapter.detected_model,
+            )
+
+        session = adapter.finalize_session()
+
+        # Should have only 1 model
+        assert len(session.models_used) == 1
+        assert session.models_used[0] == "claude-opus-4-5-20251101"
+
+        # Total should match
+        usage = session.model_usage["claude-opus-4-5-20251101"]
+        assert usage.call_count == 5
+        assert usage.input_tokens == 100 + 200 + 300 + 400 + 500  # 1500
+        assert usage.output_tokens == 50 + 100 + 150 + 200 + 250  # 750
+
+    def test_model_usage_appears_in_json_output(self, tmp_path, monkeypatch) -> None:
+        """Test model_usage is correctly serialized in session JSON"""
+        import json
+
+        from mcp_audit.codex_cli_adapter import CodexCLIAdapter
+
+        mock_codex_dir = tmp_path / ".codex"
+        mock_codex_dir.mkdir(parents=True)
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+        adapter = CodexCLIAdapter(project="test")
+        adapter.record_tool_call(
+            tool_name="mcp__zen__chat",
+            input_tokens=1000,
+            output_tokens=500,
+            model="gpt-5.1",
+        )
+        adapter.record_tool_call(
+            tool_name="mcp__zen__debug",
+            input_tokens=2000,
+            output_tokens=1000,
+            model="claude-sonnet-4",
+        )
+
+        adapter.finalize_session()
+        adapter.save_session(tmp_path)
+
+        # Load and verify JSON
+        session_files = list(adapter.session_dir.glob("*.json"))
+        assert len(session_files) == 1
+
+        with open(session_files[0]) as f:
+            data = json.load(f)
+
+        # Check models_used in session block
+        assert "models_used" in data["session"]
+        assert len(data["session"]["models_used"]) == 2
+
+        # Check model_usage block
+        assert "model_usage" in data
+        assert "gpt-5.1" in data["model_usage"]
+        assert "claude-sonnet-4" in data["model_usage"]
+        assert data["model_usage"]["gpt-5.1"]["call_count"] == 1
+        assert data["model_usage"]["gpt-5.1"]["input_tokens"] == 1000
+
+
+class TestMultiModelTUIDisplay:
+    """Tests for v1.6.0 multi-model TUI display (task-108.2.4)"""
+
+    def test_convert_model_usage_for_snapshot_empty(self, tmp_path, monkeypatch) -> None:
+        """Test _convert_model_usage_for_snapshot returns None for empty model_usage"""
+        from mcp_audit.codex_cli_adapter import CodexCLIAdapter
+
+        mock_codex_dir = tmp_path / ".codex"
+        mock_codex_dir.mkdir(parents=True)
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+        adapter = CodexCLIAdapter(project="test")
+        # No tool calls, so model_usage is empty
+        result = adapter._convert_model_usage_for_snapshot()
+        assert result is None
+
+    def test_convert_model_usage_for_snapshot_single_model(self, tmp_path, monkeypatch) -> None:
+        """Test _convert_model_usage_for_snapshot with single model"""
+        from mcp_audit.codex_cli_adapter import CodexCLIAdapter
+
+        mock_codex_dir = tmp_path / ".codex"
+        mock_codex_dir.mkdir(parents=True)
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+        adapter = CodexCLIAdapter(project="test")
+        adapter.record_tool_call(
+            tool_name="mcp__zen__chat",
+            input_tokens=1000,
+            output_tokens=500,
+            model="gpt-5.1",
+        )
+        adapter.finalize_session()
+
+        result = adapter._convert_model_usage_for_snapshot()
+        assert result is not None
+        assert len(result) == 1
+        # Tuple format: (model, input, output, total, cache_read, cost, calls)
+        model, inp, out, total, cache_read, cost, calls = result[0]
+        assert model == "gpt-5.1"
+        assert inp == 1000
+        assert out == 500
+        assert total == 1500
+        assert calls == 1
+
+    def test_convert_model_usage_for_snapshot_multi_model(self, tmp_path, monkeypatch) -> None:
+        """Test _convert_model_usage_for_snapshot with multiple models"""
+        from mcp_audit.codex_cli_adapter import CodexCLIAdapter
+
+        mock_codex_dir = tmp_path / ".codex"
+        mock_codex_dir.mkdir(parents=True)
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+        adapter = CodexCLIAdapter(project="test")
+        adapter.record_tool_call(
+            tool_name="mcp__zen__chat",
+            input_tokens=1000,
+            output_tokens=500,
+            model="gpt-5.1",
+        )
+        adapter.record_tool_call(
+            tool_name="mcp__zen__debug",
+            input_tokens=2000,
+            output_tokens=1000,
+            model="claude-sonnet-4",
+        )
+        adapter.finalize_session()
+
+        result = adapter._convert_model_usage_for_snapshot()
+        assert result is not None
+        assert len(result) == 2
+
+        # Convert to dict for easier assertion
+        model_dict = {r[0]: r for r in result}
+        assert "gpt-5.1" in model_dict
+        assert "claude-sonnet-4" in model_dict
+
+        gpt = model_dict["gpt-5.1"]
+        assert gpt[1] == 1000  # input
+        assert gpt[2] == 500  # output
+        assert gpt[3] == 1500  # total
+
+        claude = model_dict["claude-sonnet-4"]
+        assert claude[1] == 2000  # input
+        assert claude[2] == 1000  # output
+        assert claude[3] == 3000  # total
+
+    def test_display_snapshot_multi_model_fields(self) -> None:
+        """Test DisplaySnapshot has multi-model fields"""
+        from mcp_audit.display.snapshot import DisplaySnapshot
+
+        # Create snapshot with multi-model data
+        snapshot = DisplaySnapshot.create(
+            project="test",
+            platform="test",
+            start_time=datetime.now(),
+            duration_seconds=60.0,
+            models_used=["model-a", "model-b"],
+            model_usage=[
+                ("model-a", 1000, 500, 1500, 0, 0.01, 5),
+                ("model-b", 2000, 1000, 3000, 0, 0.02, 3),
+            ],
+            is_multi_model=True,
+        )
+
+        assert snapshot.is_multi_model is True
+        assert len(snapshot.models_used) == 2
+        assert "model-a" in snapshot.models_used
+        assert "model-b" in snapshot.models_used
+        assert len(snapshot.model_usage) == 2
+
+    def test_display_snapshot_single_model_defaults(self) -> None:
+        """Test DisplaySnapshot defaults for single model (backward compatible)"""
+        from mcp_audit.display.snapshot import DisplaySnapshot
+
+        # Create snapshot without multi-model data
+        snapshot = DisplaySnapshot.create(
+            project="test",
+            platform="test",
+            start_time=datetime.now(),
+            duration_seconds=60.0,
+            model_id="model-a",
+            model_name="Model A",
+        )
+
+        assert snapshot.is_multi_model is False
+        assert len(snapshot.models_used) == 0
+        assert len(snapshot.model_usage) == 0
+
+
+class TestStaticCostDataStructure:
+    """Tests for v1.6.0 StaticCost dataclass (task-108.4)"""
+
+    def test_static_cost_creation_default(self) -> None:
+        """Test StaticCost can be created with defaults"""
+        from mcp_audit.base_tracker import StaticCost
+
+        static_cost = StaticCost()
+
+        assert static_cost.total_tokens == 0
+        assert static_cost.source == "estimate"
+        assert static_cost.by_server == {}
+        assert static_cost.confidence == 0.7
+
+    def test_static_cost_creation_with_values(self) -> None:
+        """Test StaticCost can be created with custom values"""
+        from mcp_audit.base_tracker import StaticCost
+
+        static_cost = StaticCost(
+            total_tokens=5000,
+            source="live",
+            by_server={"zen": 2500, "backlog": 1500, "brave-search": 1000},
+            confidence=0.95,
+        )
+
+        assert static_cost.total_tokens == 5000
+        assert static_cost.source == "live"
+        assert len(static_cost.by_server) == 3
+        assert static_cost.by_server["zen"] == 2500
+        assert static_cost.confidence == 0.95
+
+    def test_static_cost_to_dict(self) -> None:
+        """Test StaticCost.to_dict() produces correct output"""
+        from mcp_audit.base_tracker import StaticCost
+
+        static_cost = StaticCost(
+            total_tokens=3000,
+            source="cache",
+            by_server={"server-a": 2000, "server-b": 1000},
+            confidence=0.8,
+        )
+
+        result = static_cost.to_dict()
+
+        assert result["total_tokens"] == 3000
+        assert result["source"] == "cache"
+        assert result["by_server"] == {"server-a": 2000, "server-b": 1000}
+        assert result["confidence"] == 0.8
+
+    def test_session_has_static_cost_field(self) -> None:
+        """Test Session has optional static_cost field"""
+        from mcp_audit.base_tracker import Session, StaticCost
+
+        session = Session()
+
+        # Default is None
+        assert session.static_cost is None
+
+        # Can be set
+        session.static_cost = StaticCost(total_tokens=5000)
+        assert session.static_cost is not None
+        assert session.static_cost.total_tokens == 5000
+
+    def test_session_to_dict_includes_static_cost_when_set(self) -> None:
+        """Test Session.to_dict() includes static_cost when set"""
+        from mcp_audit.base_tracker import Session, StaticCost
+
+        session = Session()
+        session.static_cost = StaticCost(
+            total_tokens=4000,
+            source="estimate",
+            by_server={"zen": 4000},
+        )
+
+        result = session.to_dict()
+
+        assert "static_cost" in result
+        assert result["static_cost"]["total_tokens"] == 4000
+        assert result["static_cost"]["source"] == "estimate"
+        assert result["static_cost"]["by_server"] == {"zen": 4000}
+
+    def test_session_to_dict_excludes_static_cost_when_none(self) -> None:
+        """Test Session.to_dict() excludes static_cost when None"""
+        from mcp_audit.base_tracker import Session
+
+        session = Session()
+        session.static_cost = None
+
+        result = session.to_dict()
+
+        assert "static_cost" not in result
 
 
 if __name__ == "__main__":

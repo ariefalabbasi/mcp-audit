@@ -1,6 +1,7 @@
 # Pricing Configuration Guide
 
-**Last Updated**: 2025-12-08
+**Last Updated**: 2025-12-12
+**Version**: v0.6.0
 
 This guide explains how to configure model pricing for cost calculation in MCP Audit.
 
@@ -8,56 +9,142 @@ This guide explains how to configure model pricing for cost calculation in MCP A
 
 ## Overview
 
-MCP Audit uses `mcp-audit.toml` to define pricing for AI models. This allows accurate cost estimation for your sessions.
+MCP Audit provides accurate cost estimation through a multi-tier pricing system:
 
 **Key Features**:
-- User-configurable pricing for any model
-- Support for custom models and local models (zero cost)
-- Automatic validation with warnings for missing pricing
-- Easy-to-edit TOML format
+- **Dynamic Pricing (v0.6.0)**: Auto-fetch current pricing for 2,000+ models via LiteLLM API
+- **24-hour caching**: Minimize network requests while staying current
+- **TOML fallback**: Define custom pricing or override API values
+- **Offline mode**: Work without network access using cached/TOML pricing
+- **Data quality tracking**: Know where your pricing came from (`pricing_source`)
 
 ---
 
 ## Pricing Sources (Lookup Order)
 
-MCP Audit uses the following priority order to find pricing configuration:
+MCP Audit uses the following priority order for pricing:
+
+| Priority | Source | Description |
+|----------|--------|-------------|
+| 1 | **LiteLLM API** | Fresh pricing from [LiteLLM's pricing database](https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json) (2,000+ models) |
+| 2 | **API Cache** | Cached API data (valid for 24 hours by default) |
+| 3 | **TOML config** | `./mcp-audit.toml` or `~/.mcp-audit/mcp-audit.toml` |
+| 4 | **Built-in defaults** | Hardcoded pricing for common models |
+
+### How It Works
+
+1. **API enabled (default)**: Fetches from LiteLLM if cache expired, caches result
+2. **Cache valid**: Uses cached pricing without network request
+3. **API fails/disabled**: Falls back to TOML configuration
+4. **No TOML**: Uses built-in defaults for common models
+
+---
+
+## Dynamic Pricing Configuration (v0.6.0)
+
+Control LiteLLM API behavior in `mcp-audit.toml`:
+
+```toml
+[pricing.api]
+enabled = true        # Enable/disable API fetching (default: true)
+cache_ttl_hours = 24  # Cache duration in hours (default: 24)
+offline_mode = false  # Never fetch, use cache/TOML only (default: false)
+```
+
+### Configuration Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `enabled` | `true` | Enable LiteLLM API pricing |
+| `cache_ttl_hours` | `24` | Hours before cache expires |
+| `offline_mode` | `false` | Skip all network requests |
+
+### Example Configurations
+
+**Default (recommended)** — Auto-fetch with 24h cache:
+```toml
+[pricing.api]
+enabled = true
+cache_ttl_hours = 24
+```
+
+**Offline mode** — Never fetch, use TOML/cache only:
+```toml
+[pricing.api]
+enabled = true
+offline_mode = true
+```
+
+**Disable API entirely** — TOML-only pricing:
+```toml
+[pricing.api]
+enabled = false
+```
+
+**Frequent updates** — Refresh every 6 hours:
+```toml
+[pricing.api]
+enabled = true
+cache_ttl_hours = 6
+```
+
+### Cache Location
+
+API pricing is cached at: `~/.mcp-audit/pricing-cache.json`
+
+Check cache status with:
+```bash
+mcp-audit init
+```
+
+---
+
+## Data Quality: Pricing Source
+
+Session logs now include pricing source information in `data_quality`:
+
+```json
+{
+  "data_quality": {
+    "accuracy_level": "exact",
+    "pricing_source": "api",
+    "pricing_freshness": "fresh",
+    "confidence": 0.99
+  }
+}
+```
+
+### Pricing Source Values
+
+| Value | Description |
+|-------|-------------|
+| `api` | Fresh from LiteLLM API |
+| `cache` | Valid cached API data |
+| `cache-stale` | Expired cache (fallback) |
+| `toml` | From TOML configuration |
+| `built-in` | Hardcoded defaults |
+
+### Pricing Freshness Values
+
+| Value | Description |
+|-------|-------------|
+| `fresh` | Just fetched from API |
+| `cached` | Valid cache |
+| `stale` | Expired cache |
+| `unknown` | No pricing data |
+
+---
+
+## TOML Pricing Configuration
+
+### File Locations
 
 | Priority | Location | Use Case |
 |----------|----------|----------|
 | 1 | `./mcp-audit.toml` | Project-specific override |
 | 2 | `~/.mcp-audit/mcp-audit.toml` | User-level custom pricing |
-| 3 | **Built-in defaults** | Zero-config fallback |
 
-### How It Works
-
-1. **Project override**: If `mcp-audit.toml` exists in CWD, it's used first
-2. **User config**: Falls back to `~/.mcp-audit/mcp-audit.toml` if exists
-3. **Built-in defaults**: Uses hardcoded pricing for common models (Claude, OpenAI, Gemini)
-
-### Creating a User Config
-
-To customize pricing globally:
-
-```bash
-# Create config directory
-mkdir -p ~/.mcp-audit
-
-# Option 1: Download template
-curl -o ~/.mcp-audit/mcp-audit.toml \
-  https://raw.githubusercontent.com/littlebearapps/mcp-audit/main/mcp-audit.toml
-
-# Option 2: Create minimal config (overrides only)
-cat > ~/.mcp-audit/mcp-audit.toml << 'EOF'
-[pricing.custom]
-"my-custom-model" = { input = 1.0, output = 5.0 }
-EOF
-```
-
-**Note**: User config completely replaces defaults - include all models you need.
-
----
-
-## Configuration Format
+### Configuration Format
 
 ```toml
 [pricing.vendor]
@@ -72,115 +159,95 @@ EOF
 
 **Vendors**: Group models by vendor namespace (e.g., `claude`, `openai`, `custom`)
 
----
+### Adding Custom Models
 
-## Adding a New Model
-
-### Example 1: OpenAI Model
+TOML pricing overrides API pricing for the same model:
 
 ```toml
-[pricing.openai]
-"gpt-4-turbo" = { input = 10.0, output = 30.0, cache_read = 5.0 }
+# Override API pricing for a specific model
+[pricing.claude]
+"claude-opus-4-5-20251101" = { input = 5.00, output = 25.00 }
+
+# Add a model not in LiteLLM
+[pricing.custom]
+"my-fine-tuned-model" = { input = 2.0, output = 10.0 }
+
+# Local model (zero cost)
+[pricing.custom]
+"llama-3-70b-local" = { input = 0.0, output = 0.0 }
 ```
 
-### Example 2: Local Model (Zero Cost)
+### Creating a User Config
 
-```toml
+```bash
+# Create config directory
+mkdir -p ~/.mcp-audit
+
+# Create minimal config (API + custom overrides)
+cat > ~/.mcp-audit/mcp-audit.toml << 'EOF'
+[pricing.api]
+enabled = true
+cache_ttl_hours = 24
+
 [pricing.custom]
-"llama-3-70b" = { input = 0.0, output = 0.0 }
-```
-
-### Example 3: Custom Fine-Tuned Model
-
-```toml
-[pricing.custom]
-"my-fine-tuned-gpt4" = { input = 5.0, output = 20.0, cache_read = 2.5 }
+"my-custom-model" = { input = 1.0, output = 5.0 }
+EOF
 ```
 
 ---
 
 ## Finding Model Pricing
 
-### Anthropic (Claude)
-- **Pricing page**: https://www.anthropic.com/pricing
-- Models: Claude Opus, Sonnet, Haiku
+### Automatic (Recommended)
 
-### OpenAI
-- **Pricing page**: https://openai.com/api/pricing/
-- Models: GPT-5.1, GPT-4o, O4-Mini, O3-Mini, O1
+With dynamic pricing enabled, MCP Audit automatically fetches current pricing for:
+- **Anthropic**: Claude Opus, Sonnet, Haiku (all versions)
+- **OpenAI**: GPT-4o, GPT-5.1, O-series models
+- **Google**: Gemini Pro, Flash, and experimental models
+- **2,000+ other models** from various providers
 
-### Google (Gemini)
-- **Pricing page**: https://ai.google.dev/gemini-api/docs/pricing
-- Models: Gemini 3 Pro, Gemini 2.5 Pro/Flash, Gemini 2.0 Flash
+### Manual Reference
 
-### Other Providers
-- Check provider's pricing documentation
-- Convert to USD per million tokens
-- Add to `[pricing.custom]` section
+If you need to verify or override pricing:
+
+| Provider | Pricing Page |
+|----------|--------------|
+| Anthropic | https://www.anthropic.com/pricing |
+| OpenAI | https://openai.com/api/pricing/ |
+| Google | https://ai.google.dev/gemini-api/docs/pricing |
 
 ---
 
 ## Validation
+
+### Check Pricing Status
+
+```bash
+mcp-audit init
+```
+
+Example output:
+```
+MCP Audit Configuration Status
+==============================
+Version: 0.6.0
+
+Pricing:
+  Source: api (fresh)
+  Models available: 2,347
+  Cache expires in: 23h 14m
+
+Tokenizer:
+  Gemma: installed
+```
 
 ### Automatic Warnings
 
 MCP Audit warns when a model has no pricing configured:
 
 ```
-⚠️ WARNING: No pricing configured for model: my-new-model
-   Add pricing to mcp-audit.toml under [pricing.custom]
-```
-
-### Manual Validation
-
-Test your configuration:
-
-```bash
-python3 pricing_config.py
-```
-
-Expected output:
-```
-✓ Loaded config from mcp-audit.toml
-Validation: ✓ PASS
-```
-
----
-
-## Usage in Code
-
-### Python API
-
-```python
-from pricing_config import PricingConfig
-
-# Load configuration
-config = PricingConfig()
-
-# Get pricing for a model
-pricing = config.get_model_pricing("claude-sonnet-4-5-20250929")
-print(pricing)  # {'input': 3.0, 'output': 15.0, ...}
-
-# Calculate cost
-cost = config.calculate_cost(
-    "claude-sonnet-4-5-20250929",
-    input_tokens=10000,
-    output_tokens=5000,
-    cache_read_tokens=50000
-)
-print(f"Cost: ${cost:.4f}")  # Cost: $0.1200
-```
-
-### List Available Models
-
-```python
-# All models
-all_models = config.list_models()
-
-# Models by vendor
-claude_models = config.list_models('claude')
-openai_models = config.list_models('openai')
-custom_models = config.list_models('custom')
+WARNING: No pricing found for model: unknown-model-xyz
+   Cost will be $0.00 for this session
 ```
 
 ---
@@ -206,14 +273,46 @@ USD_to_GBP = 0.79
 [metadata]
 currency = "USD"
 pricing_unit = "per_million_tokens"
-last_updated = "2025-12-04"
+last_updated = "2025-12-12"
 ```
 
 ---
 
 ## Common Issues
 
-### Issue 1: "TOML support not available"
+### Issue 1: "No pricing data available"
+
+**Cause**: API disabled and no TOML config found.
+
+**Solution**: Either enable API or create TOML config:
+```toml
+[pricing.api]
+enabled = true
+```
+
+### Issue 2: Network errors fetching pricing
+
+**Cause**: Firewall or network blocking GitHub raw content.
+
+**Solution**: Use offline mode with cached/TOML pricing:
+```toml
+[pricing.api]
+enabled = true
+offline_mode = true
+```
+
+### Issue 3: Stale pricing data
+
+**Cause**: Cache expired and API fetch failed.
+
+**Solution**: Check network connectivity, or manually refresh:
+```bash
+# Clear cache to force refresh
+rm ~/.mcp-audit/pricing-cache.json
+mcp-audit init
+```
+
+### Issue 4: "TOML support not available"
 
 **Solution**: Install toml package (Python 3.8-3.10 only):
 
@@ -223,77 +322,15 @@ pip install toml
 
 **Note**: Python 3.11+ has built-in `tomllib` (no installation needed)
 
-### Issue 2: "Config file not found"
-
-**Solution**: Ensure `mcp-audit.toml` exists in project root:
-
-```bash
-ls mcp-audit.toml
-```
-
-### Issue 3: Invalid TOML syntax
-
-**Solution**: Validate TOML format online:
-- https://www.toml-lint.com/
-
-Common mistakes:
-- Missing quotes around model names
-- Invalid numeric values (use dots: `3.0` not `3,0`)
-- Unclosed brackets
-
----
-
-## Migration from model-pricing.json
-
-If you previously used `model-pricing.json`, the TOML format is equivalent:
-
-**Old (JSON)**:
-```json
-{
-  "models": {
-    "claude": {
-      "claude-sonnet-4-5-20250929": {
-        "input": 3.0,
-        "output": 15.0
-      }
-    }
-  }
-}
-```
-
-**New (TOML)**:
-```toml
-[pricing.claude]
-"claude-sonnet-4-5-20250929" = { input = 3.0, output = 15.0 }
-```
-
-**Benefits of TOML**:
-- ✅ More human-readable
-- ✅ Easier to edit manually
-- ✅ Built-in Python 3.11+ support
-- ✅ Supports comments (JSON doesn't)
-
 ---
 
 ## Best Practices
 
-1. **Keep pricing up-to-date**: Check provider pricing pages quarterly
-2. **Document custom models**: Add comments explaining your custom model pricing
-3. **Use vendor namespaces**: Group models by provider for organization
-4. **Validate after editing**: Run `python3 pricing_config.py` to test changes
-5. **Version control**: Commit `mcp-audit.toml` to git for team consistency
-
----
-
-## Example Configuration
-
-See the default `mcp-audit.toml` for a complete example with:
-- Claude models (Opus 4.5, Sonnet 4.5, Haiku 4.5 + legacy)
-- OpenAI models (GPT-5.1, GPT-4o, O-series)
-- Gemini models (Gemini 3, 2.5, 2.0)
-- Custom model template
-- Exchange rates
-- Metadata
+1. **Use dynamic pricing** (default) for automatic updates
+2. **Override specific models** in TOML when needed
+3. **Use offline mode** for air-gapped environments
+4. **Check `mcp-audit init`** to verify pricing source
+5. **Monitor `pricing_source`** in session logs for accuracy
 
 ---
 
@@ -312,6 +349,21 @@ See the default `mcp-audit.toml` for a complete example with:
 - `pricing_data` - Dictionary of all pricing data
 - `metadata` - Configuration metadata
 - `loaded` - Boolean indicating if config loaded successfully
+- `pricing_source` - Source of current pricing data
+
+### PricingAPI Class (v0.6.0)
+
+**Methods**:
+- `get_pricing(model_name)` - Get pricing for a model from API/cache
+- `refresh()` - Force refresh from API
+- `list_models()` - List all models with API pricing
+- `clear_cache()` - Clear the pricing cache
+
+**Properties**:
+- `source` - Current pricing source (api/cache/cache-stale/none)
+- `freshness` - Cache freshness (fresh/cached/stale/unknown)
+- `model_count` - Number of models available
+- `expires_in` - Time until cache expires
 
 ---
 

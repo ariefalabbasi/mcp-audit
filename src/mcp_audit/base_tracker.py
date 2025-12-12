@@ -5,6 +5,7 @@ BaseTracker - Abstract base class for platform-specific MCP trackers
 Provides a stable adapter interface for Claude Code, Codex CLI, Gemini CLI, and future platforms.
 """
 
+import contextlib
 import hashlib
 import json
 import warnings
@@ -21,7 +22,7 @@ if TYPE_CHECKING:
 from . import __version__
 
 # Schema version (see docs/data-contract.md for compatibility guarantees)
-SCHEMA_VERSION = "1.5.0"
+SCHEMA_VERSION = "1.6.0"
 
 
 def _now_with_timezone() -> datetime:
@@ -81,6 +82,8 @@ class Call:
     is_estimated: bool = False  # True for Codex/Gemini MCP tools
     estimation_method: Optional[str] = None  # "tiktoken", "sentencepiece", or "character"
     estimation_encoding: Optional[str] = None  # e.g., "o200k_base", "sentencepiece:gemma"
+    # Multi-model tracking (v1.6.0 - task-108.2.2)
+    model: Optional[str] = None  # Model used for this call (when known)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to JSON-serializable dict for v1.4.0 format"""
@@ -103,6 +106,9 @@ class Call:
             result["is_estimated"] = True
             result["estimation_method"] = self.estimation_method
             result["estimation_encoding"] = self.estimation_encoding
+        # v1.6.0: Add model field only when set (task-108.2.2)
+        if self.model:
+            result["model"] = self.model
         return result
 
     def to_dict_v1_0(self) -> Dict[str, Any]:
@@ -316,7 +322,7 @@ class Smell:
 
 @dataclass
 class DataQuality:
-    """Data quality and accuracy indicators for a session (v1.5.0)
+    """Data quality and accuracy indicators for a session (v1.5.0, v1.6.0)
 
     Provides clear labeling of how accurate the token metrics are,
     helping users understand the reliability of the data.
@@ -326,6 +332,8 @@ class DataQuality:
         token_source: Tokenizer/source used (e.g., "native", "tiktoken", "sentencepiece")
         token_encoding: Specific encoding (e.g., "o200k_base", "gemma")
         confidence: Estimated accuracy as float (0.0-1.0)
+        pricing_source: Where pricing data came from (v1.6.0)
+        pricing_freshness: Pricing data freshness (v1.6.0)
         notes: Additional context about data quality
     """
 
@@ -333,6 +341,9 @@ class DataQuality:
     token_source: str = "native"  # "native", "tiktoken", "sentencepiece", "character"
     token_encoding: Optional[str] = None  # e.g., "o200k_base", "gemma"
     confidence: float = 1.0  # 0.0-1.0
+    # v1.6.0: Pricing source tracking (task-108.3.4)
+    pricing_source: str = "defaults"  # "api", "cache", "cache-stale", "file", "defaults"
+    pricing_freshness: str = "unknown"  # "fresh", "cached", "stale", "unknown"
     notes: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
@@ -341,12 +352,88 @@ class DataQuality:
             "accuracy_level": self.accuracy_level,
             "token_source": self.token_source,
             "confidence": self.confidence,
+            "pricing_source": self.pricing_source,
+            "pricing_freshness": self.pricing_freshness,
         }
         if self.token_encoding:
             result["token_encoding"] = self.token_encoding
         if self.notes:
             result["notes"] = self.notes
         return result
+
+
+@dataclass
+class ModelUsage:
+    """Per-model token and cost tracking (v1.6.0 - task-108.2.2)
+
+    Tracks aggregate statistics for a single model within a session,
+    enabling breakdown when users switch models mid-session.
+
+    Attributes:
+        model: Model identifier (e.g., "claude-sonnet-4-20250514")
+        input_tokens: Total input tokens for this model
+        output_tokens: Total output tokens for this model
+        cache_created_tokens: Cache creation tokens for this model
+        cache_read_tokens: Cache read tokens for this model
+        total_tokens: Sum of all token types for this model
+        cost_usd: Cost estimate for this model's usage
+        call_count: Number of tool calls using this model
+    """
+
+    model: str = ""
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_created_tokens: int = 0
+    cache_read_tokens: int = 0
+    total_tokens: int = 0
+    cost_usd: float = 0.0
+    call_count: int = 0
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to JSON-serializable dict"""
+        return {
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "cache_created_tokens": self.cache_created_tokens,
+            "cache_read_tokens": self.cache_read_tokens,
+            "total_tokens": self.total_tokens,
+            "cost_usd": self.cost_usd,
+            "call_count": self.call_count,
+        }
+
+
+@dataclass
+class StaticCost:
+    """MCP schema context tax tracking (v1.6.0 - task-108.4)
+
+    Tracks the static token cost incurred by MCP tool schemas that are
+    included in every request. This "context tax" represents overhead
+    that users pay regardless of tool usage.
+
+    Note: This feature requires either live MCP server queries or
+    estimation based on known server configurations. Full implementation
+    pending infrastructure support.
+
+    Attributes:
+        total_tokens: Total tokens across all MCP server schemas
+        source: How the token count was obtained ("live", "cache", "estimate")
+        by_server: Per-server token breakdown
+        confidence: Confidence in the estimate (0.0-1.0)
+    """
+
+    total_tokens: int = 0
+    source: str = "estimate"  # "live", "cache", "estimate"
+    by_server: Dict[str, int] = field(default_factory=dict)  # server -> tokens
+    confidence: float = 0.7  # Default for estimates
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to JSON-serializable dict"""
+        return {
+            "total_tokens": self.total_tokens,
+            "source": self.source,
+            "by_server": self.by_server,
+            "confidence": self.confidence,
+        }
 
 
 @dataclass
@@ -381,10 +468,15 @@ class Session:
     smells: List["Smell"] = field(default_factory=list)  # Efficiency anti-patterns
     data_quality: Optional["DataQuality"] = None  # Accuracy indicators
     zombie_tools: Dict[str, List[str]] = field(default_factory=dict)  # server -> unused tools
+    # v1.6.0: Multi-model tracking (task-108.2.2)
+    models_used: List[str] = field(default_factory=list)  # Distinct models used in session
+    model_usage: Dict[str, "ModelUsage"] = field(default_factory=dict)  # Per-model breakdown
+    # v1.6.0: Static cost tracking (task-108.4) - future implementation
+    static_cost: Optional["StaticCost"] = None  # MCP schema context tax (when available)
     _call_index: int = field(default=0, repr=False)  # Internal counter for call indices
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to v1.5.0 JSON-serializable dict with Insight Layer blocks"""
+        """Convert to v1.6.0 JSON-serializable dict with Multi-Model Intelligence"""
         # Build flat tool_calls array from all server sessions
         tool_calls = []
         for server_session in self.server_sessions.values():
@@ -420,6 +512,8 @@ class Session:
                 "duration_seconds": self.duration_seconds,
                 "source_files": self.source_files,
                 "message_count": self.message_count,
+                # v1.6.0: Multi-model tracking (task-108.2.2)
+                "models_used": self.models_used if self.models_used else [],
             },
             "token_usage": asdict(self.token_usage),
             "cost_estimate_usd": self.cost_estimate,
@@ -441,6 +535,17 @@ class Session:
         # v1.5.0: Add data_quality only if set (platform-dependent)
         if data_quality_dict:
             result["data_quality"] = data_quality_dict
+
+        # v1.6.0: Add model_usage only if multi-model session (task-108.2.2)
+        if self.model_usage:
+            result["model_usage"] = {
+                model: usage.to_dict() if hasattr(usage, "to_dict") else usage
+                for model, usage in self.model_usage.items()
+            }
+
+        # v1.6.0: Add static_cost only if available (task-108.4)
+        if self.static_cost:
+            result["static_cost"] = self.static_cost.to_dict()
 
         return result
 
@@ -719,10 +824,22 @@ class BaseTracker(ABC):
         # Output directory (default: ~/.mcp-audit/sessions)
         self.output_dir: Path = Path.home() / ".mcp-audit" / "sessions"
 
+        # MCP config path for static cost calculation (v0.6.0 - task-114.2)
+        self._mcp_config_path: Optional[Path] = None
+
     def _generate_session_id(self) -> str:
         """Generate unique session ID"""
         timestamp_str = self.timestamp.strftime("%Y-%m-%dT%H-%M-%S")
         return f"{self.project}-{timestamp_str}"
+
+    def set_mcp_config_path(self, config_path: Optional[Path]) -> None:
+        """Set the MCP configuration file path for static cost calculation.
+
+        Args:
+            config_path: Path to MCP config file (.mcp.json, settings.json, etc.)
+                        None to disable static cost calculation
+        """
+        self._mcp_config_path = config_path
 
     # ========================================================================
     # Abstract Methods (Platform-specific implementation required)
@@ -853,6 +970,7 @@ class BaseTracker(ABC):
         is_estimated: bool = False,
         estimation_method: Optional[str] = None,
         estimation_encoding: Optional[str] = None,
+        model: Optional[str] = None,
     ) -> None:
         """
         Record a single MCP tool call.
@@ -869,6 +987,7 @@ class BaseTracker(ABC):
             is_estimated: True if token counts are estimated (v1.4.0)
             estimation_method: "tiktoken", "sentencepiece", or "character" (v1.4.0)
             estimation_encoding: e.g., "o200k_base", "sentencepiece:gemma" (v1.4.0)
+            model: Model used for this call (v1.6.0 - task-108.2.3)
         """
         # Normalize tool name
         normalized_tool = self.normalize_tool_name(tool_name)
@@ -894,6 +1013,8 @@ class BaseTracker(ABC):
             is_estimated=is_estimated,
             estimation_method=estimation_method,
             estimation_encoding=estimation_encoding,
+            # v1.6.0: Multi-model tracking (task-108.2.3)
+            model=model,
         )
 
         # Track duplicate calls
@@ -995,6 +1116,47 @@ class BaseTracker(ABC):
         # Add server sessions to session
         self.session.server_sessions = self.server_sessions
 
+        # v1.6.0: Multi-model aggregation (task-108.2.3)
+        # Collect all calls and aggregate by model
+        model_stats: Dict[str, ModelUsage] = {}
+        for server_session in self.server_sessions.values():
+            for tool_stats in server_session.tools.values():
+                for call in tool_stats.call_history:
+                    # Use call's model, or fall back to session model, or "unknown"
+                    model = call.model or self.session.model or "unknown"
+                    if model not in model_stats:
+                        model_stats[model] = ModelUsage(model=model)
+                    stats = model_stats[model]
+                    stats.input_tokens += call.input_tokens
+                    stats.output_tokens += call.output_tokens
+                    stats.cache_created_tokens += call.cache_created_tokens
+                    stats.cache_read_tokens += call.cache_read_tokens
+                    stats.total_tokens += call.total_tokens
+                    stats.call_count += 1
+
+        # Calculate per-model costs using pricing config if available
+        if hasattr(self, "_pricing_config"):
+            pricing_config = self._pricing_config
+            for model, stats in model_stats.items():
+                # Use contextlib.suppress - if pricing fails, cost_usd remains 0.0
+                with contextlib.suppress(Exception):
+                    stats.cost_usd = pricing_config.calculate_cost(
+                        model_name=model,
+                        input_tokens=stats.input_tokens,
+                        output_tokens=stats.output_tokens,
+                        cache_created_tokens=stats.cache_created_tokens,
+                        cache_read_tokens=stats.cache_read_tokens,
+                    )
+
+        # Set session multi-model fields
+        # Ensure primary session model is always included in models_used,
+        # even if there are no MCP tool calls (task-123 fix)
+        models_used_set = set(model_stats.keys())
+        if self.session.model and self.session.model not in models_used_set:
+            models_used_set.add(self.session.model)
+        self.session.models_used = sorted(models_used_set)
+        self.session.model_usage = model_stats
+
         # Analyze duplicates
         self.session.redundancy_analysis = self._analyze_redundancy()
 
@@ -1010,6 +1172,39 @@ class BaseTracker(ABC):
         from .zombie_detector import detect_zombie_tools
 
         self.session.zombie_tools = detect_zombie_tools(self.session)
+
+        # Calculate static cost / context tax (v0.6.0 - task-114.2)
+        if self._mcp_config_path:
+            from .schema_analyzer import SchemaAnalyzer
+
+            try:
+                analyzer = SchemaAnalyzer()
+                servers = analyzer.analyze_from_file(self._mcp_config_path)
+                self.session.static_cost = analyzer.calculate_static_cost(servers)
+            except Exception as e:
+                # Log warning but don't fail session finalization
+                import logging
+
+                logging.getLogger(__name__).warning(f"Failed to calculate static cost: {e}")
+
+        # Update data_quality pricing fields (v1.6.0 - task-108.3.4)
+        # Adapters set _pricing_config, update pricing info if available
+        if hasattr(self, "_pricing_config") and self.session.data_quality:
+            pricing_config = self._pricing_config
+            # Get pricing source from config
+            if hasattr(pricing_config, "pricing_source"):
+                self.session.data_quality.pricing_source = pricing_config.pricing_source
+            # Get freshness from PricingAPI if available
+            if hasattr(pricing_config, "_pricing_api") and pricing_config._pricing_api:
+                self.session.data_quality.pricing_freshness = pricing_config._pricing_api.freshness
+            elif hasattr(pricing_config, "_source"):
+                # For file/defaults source, freshness depends on source type
+                if pricing_config._source == "file":
+                    self.session.data_quality.pricing_freshness = "cached"  # TOML is cached config
+                elif pricing_config._source == "defaults":
+                    self.session.data_quality.pricing_freshness = (
+                        "stale"  # Hardcoded defaults may be outdated
+                    )
 
         return self.session
 
@@ -1058,6 +1253,40 @@ class BaseTracker(ABC):
                     )
 
         return anomalies
+
+    def _convert_model_usage_for_snapshot(
+        self,
+    ) -> Optional[List[Tuple[str, int, int, int, int, float, int]]]:
+        """Convert session.model_usage dict to tuple format for DisplaySnapshot.
+
+        v1.6.0 (task-108.2.4): Helper to convert ModelUsage objects to the
+        flat tuple format expected by DisplaySnapshot.
+
+        Returns:
+            List of tuples: (model, input_tokens, output_tokens, total_tokens,
+                            cache_read, cost_usd, call_count)
+            Returns None if no model_usage data.
+        """
+        if not self.session.model_usage:
+            return None
+
+        result = []
+        for model, usage in self.session.model_usage.items():
+            # Tuple format: (model, input, output, total_tokens, cache_read, cost, calls)
+            # Note: total_tokens = input + output (DisplaySnapshot uses this for sorting)
+            total = usage.input_tokens + usage.output_tokens
+            result.append(
+                (
+                    model,
+                    usage.input_tokens,
+                    usage.output_tokens,
+                    total,  # total_tokens for sorting
+                    usage.cache_read_tokens,
+                    usage.cost_usd,
+                    usage.call_count,
+                )
+            )
+        return result
 
     # ========================================================================
     # High-Level Interface (CLI integration)
