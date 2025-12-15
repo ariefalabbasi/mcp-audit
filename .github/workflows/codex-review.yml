@@ -157,12 +157,16 @@ jobs:
           TOTAL=$(echo "$ALL_COMMENTS" | jq 'length')
           echo "codex_comment_count=$TOTAL" >> $GITHUB_OUTPUT
 
-          # Count P0 issues (blocker/critical patterns)
-          P0=$(echo "$ALL_COMMENTS" | jq '[.[] | select(.body | test("\\bP0\\b|\\[P0\\]|blocker|critical|severity[^a-z]*0"; "i"))] | length')
+          # Count P0 issues (Codex badge format or explicit P0 markers)
+          # Matches: ![P0 Badge], badge/P0, [P0], **P0**, explicit "P0" word
+          # Avoids false positives from generic words like "critical"
+          P0=$(echo "$ALL_COMMENTS" | jq '[.[] | select(.body | test("badge/P0|P0-red|\\[P0\\]|\\*\\*P0\\*\\*|\\bP0\\b"; "i"))] | length')
           echo "p0_count=$P0" >> $GITHUB_OUTPUT
 
-          # Count P1 issues (major/high patterns)
-          P1=$(echo "$ALL_COMMENTS" | jq '[.[] | select(.body | test("\\bP1\\b|\\[P1\\]|major|severity[^a-z]*1"; "i"))] | length')
+          # Count P1 issues (Codex badge format or explicit P1 markers)
+          # Matches: ![P1 Badge], badge/P1, [P1], **P1**, explicit "P1" word
+          # Avoids false positives from phrases like "no major issues"
+          P1=$(echo "$ALL_COMMENTS" | jq '[.[] | select(.body | test("badge/P1|P1-orange|\\[P1\\]|\\*\\*P1\\*\\*|\\bP1\\b"; "i"))] | length')
           echo "p1_count=$P1" >> $GITHUB_OUTPUT
 
           # Debug output
