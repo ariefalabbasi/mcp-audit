@@ -1,0 +1,12 @@
+# CODEOWNERS - Require human review for security-sensitive files
+# Any changes to .github/ directory require review from @nathanschram
+
+# Protect all GitHub configuration files
+/.github/ @nathanschram
+
+# Specifically protect workflows
+/.github/workflows/ @nathanschram
+
+# Protect the CODEOWNERS file itself
+/.github/CODEOWNERS @nathanschram
+
